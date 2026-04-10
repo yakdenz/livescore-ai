@@ -837,13 +837,23 @@ Yanıt SADECE şu JSON formatında olsun, başka metin olmasın:
             elif fallback_text:
                 import json
                 try:
-                    clean = fallback_text.strip().replace("```json","").replace("```","").strip()
-                    matches = json.loads(clean)
+                    import json as _json
+                    clean = fallback_text.strip()
+                    # Remove markdown code blocks
+                    for tag in ["```json", "```JSON", "```"]:
+                        clean = clean.replace(tag, "")
+                    clean = clean.strip()
+                    # Find [ ... ] 
+                    start = clean.find("[")
+                    end = clean.rfind("]") + 1
+                    if start >= 0 and end > start:
+                        clean = clean[start:end]
+                    matches = _json.loads(clean)
                     st.session_state.gemini_fallback[cache_key] = matches
                     st.rerun()
-                except:
-                    st.error("Liste parse edilemedi. Tekrar dene.")
-                    st.code(fallback_text[:500])
+                except Exception as _e:
+                    st.error(f"Parse hatası: {_e}")
+                    st.code(fallback_text[:800])
     else:
         st.info(f"🌐 Gemini ile çekildi — {len(cached_matches)} maç (cache'den)")
         if st.button("🔄 Yenile", key="gemini_refresh"):
