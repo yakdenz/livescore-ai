@@ -616,6 +616,8 @@ def parse(m,sk):
         lid=m["league"]["id"]; season=m["league"]["season"]
         h_g=m["goals"]["home"] if m["goals"]["home"] is not None else "-"
         a_g=m["goals"]["away"] if m["goals"]["away"] is not None else "-"
+        h_logo=m["teams"]["home"].get("logo","")
+        a_logo=m["teams"]["away"].get("logo","")
     else:
         elapsed=None; mid=m.get("id",0)
         try: league=m.get("league",{}).get("name","") or m.get("competition",{}).get("name","")
@@ -652,10 +654,12 @@ def parse(m,sk):
             league=m.get("tournament",{}).get("name","") or league
             country=m.get("country",{}).get("name","") or country
         except: pass
+    h_logo = m.get("teams",{}).get("home",{}).get("logo","") if sk=="football" else ""
+    a_logo = m.get("teams",{}).get("away",{}).get("logo","") if sk=="football" else ""
     return dict(home=home,away=away,hid=hid,aid=aid,h_score=h_g,a_score=a_g,
                 sh=sh,elapsed=elapsed,kickoff=ko,league=league,country=country,
                 lid=lid,season=season,mid=mid,is_major=lid in MAJOR_IDS,
-                status_txt=st_txt,raw=m)
+                status_txt=st_txt,raw=m,h_logo=h_logo,a_logo=a_logo)
 
 def badge(sh,elapsed=None,kickoff=None):
     if sh in LIVE_SH:
@@ -906,52 +910,57 @@ En az 80 maç listele."""
             q = search.lower()
             cached_matches = [m for m in cached_matches if q in (m.get("home","")+" "+m.get("away","")).lower()]
 
-        st.markdown(f"### {cfg['emoji']} Maçlar ({len(cached_matches)})")
+        st.markdown(f'<div style="font-size:12px;opacity:.5;margin:4px 0">{cfg["emoji"]} {len(cached_matches)} maç</div>', unsafe_allow_html=True)
         for i, gm in enumerate(cached_matches):
             mid_fake = f"gem_{i}"
             home = gm.get("home","?"); away = gm.get("away","?")
             league = gm.get("league",""); country = gm.get("country",""); kt = gm.get("time","")
+            league_short = league[:20]+"…" if len(league)>20 else league
 
-            chk_col, info_col, badge_col = st.columns([0.4,5,1.5])
-            with chk_col:
-                checked = st.checkbox("", key=f"chk_{mid_fake}", value=(mid_fake in st.session_state.selected), label_visibility="collapsed")
-                if checked: st.session_state.selected.add(mid_fake)
-                else: st.session_state.selected.discard(mid_fake)
-            with info_col:
-                st.caption(f"🏆 {country}  ·  {league}")
-            with badge_col:
-                if kt: st.markdown(f'<span class="status-upcoming">🕐 {kt}</span>', unsafe_allow_html=True)
+            # Compact one-line match row
+            st.markdown(f'''<div style="display:flex;align-items:center;gap:6px;padding:8px 2px;border-bottom:0.5px solid rgba(128,128,128,.1)">
+                <div style="font-size:10px;color:var(--color-text-tertiary);white-space:nowrap;min-width:45px;overflow:hidden">{league_short}</div>
+                <div style="flex:1;text-align:right;font-size:14px;font-weight:600">{home}</div>
+                <div style="min-width:40px;text-align:center;font-size:13px;opacity:.4;white-space:nowrap">– –</div>
+                <div style="flex:1;font-size:14px;font-weight:600">{away}</div>
+                <div style="font-size:11px;color:#3b82f6;white-space:nowrap">{kt}</div>
+            </div>''', unsafe_allow_html=True)
 
-            c1,c2,c3 = st.columns([4,2,4])
-            with c1: st.markdown(f"<div class='team-name' style='text-align:right'>{home}</div>", unsafe_allow_html=True)
-            with c2: st.markdown(f"<div class='score-box'>– – –</div>", unsafe_allow_html=True)
-            with c3: st.markdown(f"<div class='team-name'>{away}</div>", unsafe_allow_html=True)
+            # Checkbox
+            checked = st.checkbox("seç", key=f"chk_{mid_fake}", value=(mid_fake in st.session_state.selected), label_visibility="collapsed")
+            if checked: st.session_state.selected.add(mid_fake)
+            else: st.session_state.selected.discard(mid_fake)
 
-            with st.expander("🤖 AI Tahmini"):
-                btn1, btn2 = st.columns(2)
-                with btn1: do_s = st.button("🤖 Seçili Model", key=f"ai_{mid_fake}")
-                with btn2: do_c = st.button("⚡ Tüm Modeller", key=f"cmp_{mid_fake}")
-                use_ws_gem = st.checkbox("🌐 Gemini web araması", key=f"ws_{mid_fake}", value=False)
+            # Quick buttons (same as real match cards)
+            qb1, qb2, qb3 = st.columns(3)
+            with qb1:
+                if st.button("🤖 Analiz", key=f"ai_{mid_fake}", use_container_width=True):
+                    st.session_state[f"qr_{mid_fake}"] = "single"
+            with qb2:
+                if st.button("⚡ Karşılaştır", key=f"cmp_{mid_fake}", use_container_width=True):
+                    st.session_state[f"qr_{mid_fake}"] = "compare"
+            with qb3:
+                if st.button("🌐+⚡", key=f"ws_{mid_fake}", use_container_width=True):
+                    st.session_state[f"qr_{mid_fake}"] = "web_compare"
 
-                if do_s or do_c:
-                    p_fake = {"home":home,"away":away,"league":league,"mid":mid_fake,"sh":"NS"}
-                    prompt = generic_prompt(sport_name, home, away, "Başlamadı", league)
-                    if use_ws_gem and GEMINI_KEY:
-                        news_key_g = f"news_gem_{i}"
-                        if news_key_g not in st.session_state:
-                            with st.spinner("🌐 Güncel haberler..."):
-                                news_t, _ = call_gemini(f"{home} vs {away}: güncel sakatlıklar ve haberler. Türkçe 3 madde.", use_search=True)
-                            st.session_state[news_key_g] = news_t or ""
-                        news_t = st.session_state.get(news_key_g, "")
-                        if news_t:
-                            st.markdown(f'<div class="news-box">🌐 <b>Güncel Haberler:</b><br>{news_t}</div>', unsafe_allow_html=True)
-                            prompt = prompt + f"\n\nGÜNCEL:\n{news_t}"
-                    if do_s:
-                        with st.spinner("Analiz yapılıyor..."):
+            if st.session_state.get(f"qr_{mid_fake}"):
+                run_t = st.session_state.pop(f"qr_{mid_fake}")
+                p_fake = {"home":home,"away":away,"league":league,"mid":mid_fake,"sh":"NS"}
+                prompt = generic_prompt(sport_name, home, away, "Başlamadı", league)
+                if run_t == "web_compare" and GEMINI_KEY:
+                    nk = f"news_gem_{i}"
+                    if nk not in st.session_state:
+                        news_t, _ = call_gemini(f"{home} vs {away}: güncel sakatlıklar. Türkçe 3 madde.", use_search=True)
+                        st.session_state[nk] = news_t or ""
+                    if st.session_state.get(nk):
+                        prompt += f"\n\nGÜNCEL:\n{st.session_state[nk]}"
+                    with st.spinner("Analiz..."):
+                        if run_t in ["single","web_compare"] and run_t != "compare":
                             text, err = run_ai(prompt, ai_model)
-                        if err:
-                            st.error(err)
-                        elif text:
+                        else:
+                            text, err = None, None
+                    if run_t not in ["compare","web_compare"]:
+                        if text and not err:
                             pred = extract_pred(text, sport_name)
                             sub = extract_sub_pred(text, sport_name)
                             sub_html = "".join([f'<div style="font-size:11px;opacity:.7">{k}: {v}</div>' for k,v in sub.items()]) if sub else ""
@@ -960,6 +969,7 @@ En az 80 maç listele."""
                             show_det = st.checkbox("📋 Detayı gör", key=f"det_fake_{i}")
                             if show_det:
                                 st.markdown(f'<div class="ai-box">{text}</div>', unsafe_allow_html=True)
+                        elif err: st.error(err)
                     else:
                         compare_all_models(prompt, p_fake, _sport_name=sport_name)
 
@@ -1046,20 +1056,29 @@ def match_card(p,raw_list):
     is_live_now=p["sh"] in LIVE_SH
 
     score_col = "#ff4444" if is_live_now else "var(--color-text-primary)"
-    bdg = badge(p["sh"],p.get("elapsed"),p.get("kickoff",""))
-    league_short = p["league"][:25] + ("…" if len(p["league"])>25 else "")
+    ko = p.get("kickoff","")
+    elapsed = p.get("elapsed")
+    sh = p.get("sh","")
+    if sh in LIVE_SH and elapsed:
+        time_badge = f'<span style="color:#ff4444;font-weight:700;font-size:12px">{elapsed}\'</span>'
+    elif sh in DONE_SH:
+        time_badge = '<span style="color:#888;font-size:11px">Bitti</span>'
+    elif ko:
+        time_badge = f'<span style="color:#3b82f6;font-size:13px;font-weight:600">{ko}</span>'
+    else:
+        time_badge = ""
     
-    # Single compact row: checkbox | home --- score --- away | time/status
-    st.markdown(f"""<div style="display:flex;align-items:center;gap:6px;padding:6px 2px;border-bottom:0.5px solid rgba(128,128,128,.1)">
-        <div style="font-size:10px;color:var(--color-text-tertiary);white-space:nowrap;min-width:50px;text-align:right">{league_short}</div>
-        <div style="flex:1;text-align:right;font-size:13px;font-weight:600">{p["home"]}</div>
-        <div style="min-width:65px;text-align:center;font-size:16px;font-weight:700;color:{score_col};white-space:nowrap">{p["h_score"]}–{p["a_score"]}</div>
-        <div style="flex:1;font-size:13px;font-weight:600">{p["away"]}</div>
-        <div style="font-size:10px;white-space:nowrap">{bdg}</div>
+    league_short = p["league"][:18] + ("…" if len(p["league"])>18 else "")
+    
+    st.markdown(f"""<div style="display:flex;align-items:center;gap:4px;padding:8px 2px;border-bottom:0.5px solid rgba(128,128,128,.1)">
+        <div style="font-size:10px;color:var(--color-text-tertiary);white-space:nowrap;min-width:45px;overflow:hidden;text-overflow:ellipsis">{league_short}</div>
+        <div style="flex:1;text-align:right;font-size:14px;font-weight:700;line-height:1.2">{p["home"]}</div>
+        <div style="min-width:60px;text-align:center;font-size:15px;font-weight:700;color:{score_col};white-space:nowrap">{p["h_score"]}–{p["a_score"]}</div>
+        <div style="flex:1;font-size:14px;font-weight:700;line-height:1.2">{p["away"]}</div>
+        <div style="min-width:40px;text-align:right">{time_badge}</div>
     </div>""", unsafe_allow_html=True)
     
-    # Checkbox inline
-    checked=st.checkbox("☑️ seç",key=f"chk_{mk}",value=(mk in st.session_state.selected),label_visibility="collapsed")
+    checked=st.checkbox("seç",key=f"chk_{mk}",value=(mk in st.session_state.selected),label_visibility="collapsed")
     if checked: st.session_state.selected.add(mk)
     else: st.session_state.selected.discard(mk)
 
