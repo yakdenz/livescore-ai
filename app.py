@@ -40,16 +40,27 @@ st.markdown("""
 .mb-gpt{background:#E6F1FB;color:#0C447C}
 .news-box{background:rgba(59,130,246,.06);border:1px solid rgba(59,130,246,.2);
           border-radius:8px;padding:10px;margin:6px 0;font-size:13px;line-height:1.6}
+/* ── BUTONLAR: MOBİLDE YAN YANA ── */
+div[data-testid="stHorizontalBlock"] > div[data-testid="stColumn"] {
+  flex: 1 1 0 !important;
+  min-width: 0 !important;
+}
+div[data-testid="stHorizontalBlock"] > div[data-testid="stColumn"] > div > div > button {
+  width: 100% !important;
+  padding: 0.25rem 0.3rem !important;
+  font-size: 12px !important;
+  white-space: nowrap !important;
+  overflow: hidden !important;
+}
 @media(max-width:768px){
   .team-name{font-size:13px}
   .score-box{font-size:20px}
   .pred-score{font-size:22px}
   .ai-box{font-size:13px;padding:10px}
-}
-/* Force buttons in same row */
-div[data-testid="column"] > div > div > div > button {
-  padding: 0.25rem 0.5rem !important;
-  font-size: 13px !important;
+  div[data-testid="stHorizontalBlock"] > div[data-testid="stColumn"] > div > div > button {
+    font-size: 11px !important;
+    padding: 0.2rem 0.2rem !important;
+  }
 }
 </style>
 """, unsafe_allow_html=True)
@@ -694,6 +705,12 @@ def estimate_tokens(text):
     """Yaklaşık token sayısı (1 token ≈ 4 karakter)"""
     return len(text) // 4
 
+def logo_html(url):
+    """Takım logosu <img> döndürür; URL yoksa boş span."""
+    if url:
+        return f'<img src="{url}" style="width:20px;height:20px;object-fit:contain;vertical-align:middle;margin:0 3px;border-radius:3px" onerror="this.style.display=\'none\'">'
+    return '<span style="display:inline-block;width:20px;height:20px;vertical-align:middle;margin:0 3px"></span>'
+
 def show_ai(text,err,p,model_name,sname=None,show_tokens=True):
     if err: st.error(err); return
     if not text: return
@@ -1151,12 +1168,16 @@ def match_card(p,raw_list):
         time_badge = ""
     
     league_short = p["league"][:18] + ("…" if len(p["league"])>18 else "")
-    
-    st.markdown(f"""<div style="display:flex;align-items:center;gap:4px;padding:8px 2px;border-bottom:0.5px solid rgba(128,128,128,.1)">
-        <div style="font-size:10px;color:var(--color-text-tertiary);white-space:nowrap;min-width:45px;overflow:hidden;text-overflow:ellipsis">{league_short}</div>
-        <div style="flex:1;text-align:right;font-size:14px;font-weight:700;line-height:1.2">{p["home"]}</div>
+
+    # Takım logoları (sadece futbol)
+    h_logo = logo_html(p.get("h_logo","")) if is_football else ""
+    a_logo = logo_html(p.get("a_logo","")) if is_football else ""
+
+    st.markdown(f"""<div style="display:flex;align-items:center;gap:4px;padding:10px 2px;border-bottom:0.5px solid rgba(128,128,128,.1)">
+        <div style="font-size:10px;color:var(--color-text-tertiary);white-space:nowrap;min-width:50px;max-width:70px;overflow:hidden;text-overflow:ellipsis">{league_short}</div>
+        <div style="flex:1;text-align:right;font-size:14px;font-weight:700;line-height:1.2">{p["home"]}{h_logo}</div>
         <div style="min-width:60px;text-align:center;font-size:15px;font-weight:700;color:{score_col};white-space:nowrap">{p["h_score"]}–{p["a_score"]}</div>
-        <div style="flex:1;font-size:14px;font-weight:700;line-height:1.2">{p["away"]}</div>
+        <div style="flex:1;font-size:14px;font-weight:700;line-height:1.2">{a_logo}{p["away"]}</div>
         <div style="min-width:40px;text-align:right">{time_badge}</div>
     </div>""", unsafe_allow_html=True)
     
@@ -1175,15 +1196,15 @@ def match_card(p,raw_list):
             </div>""",unsafe_allow_html=True)
         st.markdown(f'<div class="bulk-result">{res}</div>',unsafe_allow_html=True)
 
-    # Quick action buttons
-    _qc = st.columns(3)
-    with _qc[0]:
+    # Hızlı aksiyon butonları — 3 eşit sütun, mobilde yan yana
+    _qc1, _qc2, _qc3 = st.columns(3)
+    with _qc1:
         if st.button("🤖 Analiz", key=f"quick_{mk}", use_container_width=True):
             st.session_state[f"quick_run_{mk}"] = "single"
-    with _qc[1]:
+    with _qc2:
         if st.button("⚡ 4 Model", key=f"quickcmp_{mk}", use_container_width=True):
             st.session_state[f"quick_run_{mk}"] = "compare"
-    with _qc[2]:
+    with _qc3:
         if st.button("🌐+⚡", key=f"quickws_{mk}", use_container_width=True):
             st.session_state[f"quick_run_{mk}"] = "web_compare"
 
@@ -1235,7 +1256,14 @@ def match_card(p,raw_list):
                 st.session_state[qtype_key] = "compare"
                 compare_all_models(q_prompt, p, _sport_name=sport_name)
 
-    with st.expander("📊 Detaylar & 🤖 Tekli AI Tahmini"):
+    # ── Detaylar toggle (expander yerine — kapanma sorunu YOK) ──
+    det_exp_key = f"det_exp_{mk}"
+    if det_exp_key not in st.session_state:
+        st.session_state[det_exp_key] = False
+    if st.button(f"{'🔽' if st.session_state[det_exp_key] else '▶️'} Detaylar & Tekli AI Tahmini", key=f"det_toggle_{mk}"):
+        st.session_state[det_exp_key] = not st.session_state[det_exp_key]
+
+    if st.session_state[det_exp_key]:
         if is_football:
             t1,t2,t3=st.tabs(["📈 İstatistikler","⚡ Olaylar","🤖 AI Tahmini"])
             with t1:
