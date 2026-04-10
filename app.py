@@ -343,11 +343,13 @@ def extract_pred(text, sport):
     exclude_keywords = ["çeyrek","1.çeyrek","set","yarı","periyot","q1","q2","q3","q4"]
 
     if is_basketball:
-        # Basketbol: 2-3 haneli skorlar
+        # Basketbol: her takım en az 60, en fazla 180 sayı yapar
         pat = r'\b(\d{2,3})\s*[-–]\s*(\d{2,3})\b'
         direct = re.search(r'(?:tahmin edilen skor|tahmin)[:\s]+([0-9]{2,3})\s*[-–]\s*([0-9]{2,3})', text, re.IGNORECASE)
         if direct:
-            return f"{direct.group(1)} – {direct.group(2)}"
+            a,b = int(direct.group(1)), int(direct.group(2))
+            if a >= 60 and b >= 60:
+                return f"{a} – {b}"
         for src in [final_lines, text]:
             for m in re.finditer(pat, src):
                 line_start = src.rfind("\n", 0, m.start()) + 1
@@ -356,7 +358,9 @@ def extract_pred(text, sport):
                 line = src[line_start:line_end].lower()
                 if any(w in line for w in exclude_keywords): continue
                 a,b = int(m.group(1)), int(m.group(2))
-                if a > 200 or b > 200: continue
+                # Basketbolda her iki takım da en az 60 sayı yapar
+                if a < 60 or b < 60: continue
+                if a > 180 or b > 180: continue
                 return f"{a} – {b}"
     else:
         # Direct pattern search first
