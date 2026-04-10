@@ -74,7 +74,7 @@ WAIT_SH  = {"NS"}
 TZ_TR    = timezone(timedelta(hours=3))
 
 # ── SESSION STATE ─────────────────────────────────────────────────
-for k,v in [("bulk_results",{}),("selected",set()),("live_loaded",False),("live_data",[]),("live_ts",None)]:
+for k,v in [("bulk_results",{}),("selected",set()),("live_loaded",False),("live_data",[]),("live_ts",None),("analysis_history",[])]:
     if k not in st.session_state:
         st.session_state[k] = v
 
@@ -242,16 +242,43 @@ def run_ai(prompt, model_name, use_web_search=False):
     return None,"Model bulunamadı"
 
 def extract_pred(text, sport):
+    """Extract FINAL score prediction only - ignore quarter/set/half scores."""
     if not text: return None
     big=any(w in sport.lower() for w in ["basket","nba","hokey","hockey","voleybol"])
-    pat=r'\b(\d{2,3})\s*[-–]\s*(\d{2,3})\b' if big else r'\b([0-9]{1,2})\s*[-–]\s*([0-9]{1,2})\b'
-    pred_txt=" ".join(l for l in text.split("\n") if any(w in l.lower() for w in ["tahmin","skor:","biteceğ","öner","sonuç"]))
-    for src in [pred_txt,text]:
-        m=re.search(pat,src)
-        if m:
-            a,b=int(m.group(1)),int(m.group(2))
-            if not big and a>20: continue
-            return f"{a} – {b}"
+
+    # Search in final-score specific lines first
+    final_keywords = ["final tahmin","maç tahmin","tahmin edilen skor","tahmin: ","sonuç tahmin","biteceğ","final skor"]
+    final_lines = " ".join(l for l in text.split("\n") if any(w in l.lower() for w in final_keywords))
+
+    # Exclude quarter/set/half lines
+    exclude_keywords = ["çeyrek","1.çeyrek","set","yarı","periyot","q1","q2","q3","q4"]
+
+    if big:
+        # Basketball/hockey: 2-3 digit scores
+        pat = r'\b(\d{2,3})\s*[-–]\s*(\d{2,3})\b'
+        # Look in final score lines, excluding small period scores
+        for src in [final_lines, text]:
+            for m in re.finditer(pat, src):
+                line_start = src.rfind("\n", 0, m.start()) + 1
+                line_end = src.find("\n", m.end())
+                if line_end == -1: line_end = len(src)
+                line = src[line_start:line_end].lower()
+                if any(w in line for w in exclude_keywords): continue
+                a,b = int(m.group(1)), int(m.group(2))
+                if a > 200 or b > 200: continue  # sanity check
+                return f"{a} – {b}"
+    else:
+        pat = r'\b([0-9]{1,2})\s*[-–]\s*([0-9]{1,2})\b'
+        for src in [final_lines, text]:
+            for m in re.finditer(pat, src):
+                line_start = src.rfind("\n", 0, m.start()) + 1
+                line_end = src.find("\n", m.end())
+                if line_end == -1: line_end = len(src)
+                line = src[line_start:line_end].lower()
+                if any(w in line for w in exclude_keywords): continue
+                a,b = int(m.group(1)), int(m.group(2))
+                if a > 20 or b > 20: continue
+                return f"{a} – {b}"
     return None
 
 # ── PROMPTS ───────────────────────────────────────────────────────
@@ -502,6 +529,18 @@ def show_ai(text,err,p,model_name,show_tokens=True):
     tokens=estimate_tokens(text)
     token_info=f' <span style="font-size:11px;opacity:.5">~{tokens} token</span>' if show_tokens else ""
     st.markdown(f'<div class="ai-box">🤖 <b>{model_name}</b>{token_info}<br><br>{text}</div>',unsafe_allow_html=True)
+    # Save to history
+    import datetime as dt_module
+    st.session_state.analysis_history.append({
+        "time": dt_module.datetime.now(TZ_TR).strftime("%H:%M"),
+        "sport": sport_name,
+        "home": p["home"], "away": p["away"],
+        "league": p.get("league",""),
+        "model": model_name,
+        "pred": pred or "?",
+        "text": text,
+        "tokens": tokens
+    })
 
 def compare_all_models(prompt,p):
     """Tüm modelleri paralel çalıştır ve yan yana göster"""
@@ -782,9 +821,11 @@ def match_card(p,raw_list):
     st.markdown('<div class="divider"></div>',unsafe_allow_html=True)
 
 # ── SEKMELER ─────────────────────────────────────────────────────
-tab_pre,tab_live=st.tabs([
+hist_count = len(st.session_state.analysis_history)
+tab_pre,tab_live,tab_hist=st.tabs([
     f"🕐 Maç Öncesi ({len(pre_all)})",
-    f"🔴 Canlı & Bitti ({len(live_parsed)})"
+    f"🔴 Canlı & Bitti ({len(live_parsed)})",
+    f"📊 Tahmin Geçmişi ({hist_count})"
 ])
 
 with tab_pre:
@@ -834,3 +875,40 @@ with tab_live:
         if lmin:
             st.markdown(f"### 📋 Diğer Ligler ({len(lmin)})")
             for p in lmin: match_card(p,st.session_state.live_data)
+
+with tab_hist:
+    hist = st.session_state.analysis_history
+    if not hist:
+        st.info("Henüz analiz yapılmadı. Maç kartlarından AI tahmini al.")
+    else:
+        # Clear button
+        if st.button("🗑️ Geçmişi Temizle"):
+            st.session_state.analysis_history = []
+            st.rerun()
+
+        st.markdown(f"**Toplam {len(hist)} analiz yapıldı**")
+        st.markdown("---")
+
+        # Show in reverse order (newest first)
+        for i, h in enumerate(reversed(hist)):
+            col1,col2,col3,col4 = st.columns([1,3,2,1.5])
+            with col1:
+                st.markdown(f"**{h['time']}**")
+                st.caption(h['sport'])
+            with col2:
+                st.markdown(f"**{h['home']} – {h['away']}**")
+                st.caption(h['league'])
+            with col3:
+                color={"🟡 Groq – Llama 3.3":"#EF9F27","🟢 Gemini 2.0 Flash":"#22c55e",
+                       "⚪ GPT-4o Mini":"#378ADD","🔴 DeepSeek V3":"#E24B4A"}.get(h['model'],"#888")
+                pred = h.get('pred','?')
+                st.markdown(f'<div style="font-size:22px;font-weight:900;color:{color}">{pred}</div>',
+                            unsafe_allow_html=True)
+                st.caption(h['model'].split()[0] + " " + h['model'].split()[1] if len(h['model'].split())>1 else h['model'])
+            with col4:
+                st.caption(f"~{h['tokens']} token")
+
+            with st.expander("Tam analizi gör"):
+                st.markdown(f'<div class="ai-box">{h["text"]}</div>', unsafe_allow_html=True)
+
+            st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
