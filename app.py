@@ -1064,15 +1064,18 @@ if all_countries:
                      "Czech Republic":"🇨🇿","Sweden":"🇸🇪","Norway":"🇳🇴","Denmark":"🇩🇰","Switzerland":"🇨🇭"}
     
     sel_country = st.session_state.get(country_filter_key, "Hepsi")
-    # Show as radio but compact
-    country_disp = [f"{country_icons.get(c,'🌍')} {c}" if c!="Hepsi" else "🌍 Hepsi" for c in ordered[:10]]
-    sel_idx = ordered[:10].index(sel_country) if sel_country in ordered[:10] else 0
-    new_country = st.radio("", ordered[:10], index=sel_idx, horizontal=True, 
-                           format_func=lambda c: f"{country_icons.get(c,'🌍')} {c}" if c!="Hepsi" else "🌍 Hepsi",
-                           key=f"cradio_{sport_name}", label_visibility="collapsed")
-    if new_country != sel_country:
-        st.session_state[country_filter_key] = new_country
-        st.rerun()
+    # Scrollable country buttons
+    shown = ordered[:12]
+    c_cols = st.columns(len(shown))
+    for _ci, _c in enumerate(shown):
+        with c_cols[_ci]:
+            _icon = country_icons.get(_c,"🌍") if _c != "Hepsi" else "🌍"
+            _active = _c == sel_country
+            if st.button(_icon, key=f"cntry_{sport_name}_{_ci}", 
+                        help=_c, use_container_width=True,
+                        type="primary" if _active else "secondary"):
+                st.session_state[country_filter_key] = _c
+                st.rerun()
     
     if sel_country != "Hepsi":
         pre_all = [p for p in pre_all if p.get("country","") == sel_country]
@@ -1174,10 +1177,19 @@ def match_card(p,raw_list):
         if st.button("🌐⚡", key=f"quickws_{mk}", use_container_width=True):
             st.session_state[f"quick_run_{mk}"] = "web_compare"
 
+    # Show stored quick analysis results
+    qres_key = f"qres_{mk}"
+    qtype_key = f"qtype_{mk}"
+    if st.session_state.get(qres_key):
+        qr = st.session_state[qres_key]
+        qt = st.session_state.get(qtype_key, "single")
+        if qt == "single":
+            show_ai(qr.get("text"), qr.get("err"), p, qr.get("model", ai_model), sname=sport_name)
+        # compare results shown inline already
+
     # Run quick analysis if triggered
     if st.session_state.get(f"quick_run_{mk}"):
-        run_type = st.session_state[f"quick_run_{mk}"]
-        del st.session_state[f"quick_run_{mk}"]
+        run_type = st.session_state.pop(f"quick_run_{mk}")
         with st.spinner("Analiz yapılıyor..."):
             if is_football:
                 sd = fetch_stats(p["mid"]) if p["sh"]!="NS" else []
@@ -1190,9 +1202,9 @@ def match_card(p,raw_list):
                 inj_a = fetch_injuries(p["aid"],p["season"])
                 h2h = fetch_h2h(p["hid"],p["aid"])
                 stand = fetch_standings(p["lid"],p["season"])
-                pred = fetch_predictions(p["mid"])
+                pred_api = fetch_predictions(p["mid"])
                 raw = next((m for m in raw_list if m["fixture"]["id"]==p["mid"]),None)
-                q_prompt = football_prompt(raw,sd,ed,hf,af,hs,as_,inj_h,inj_a,h2h,stand,pred) if raw else generic_prompt(sport_name,p["home"],p["away"],p["status_txt"],p["league"])
+                q_prompt = football_prompt(raw,sd,ed,hf,af,hs,as_,inj_h,inj_a,h2h,stand,pred_api) if raw else generic_prompt(sport_name,p["home"],p["away"],p["status_txt"],p["league"])
             else:
                 q_prompt = generic_prompt(sport_name,p["home"],p["away"],p["status_txt"],p["league"])
 
@@ -1204,11 +1216,14 @@ def match_card(p,raw_list):
                 if st.session_state.get(news_k):
                     q_prompt += f"\n\nGÜNCEL:\n{st.session_state[news_k]}"
 
-        if run_type == "single":
-            text,err = run_ai(q_prompt, ai_model)
-            show_ai(text, err, p, ai_model, sname=sport_name)
-        else:
-            compare_all_models(q_prompt, p, _sport_name=sport_name)
+            if run_type == "single":
+                text, err = run_ai(q_prompt, ai_model)
+                st.session_state[qres_key] = {"text": text, "err": err, "model": ai_model}
+                st.session_state[qtype_key] = "single"
+                show_ai(text, err, p, ai_model, sname=sport_name)
+            else:
+                st.session_state[qtype_key] = "compare"
+                compare_all_models(q_prompt, p, _sport_name=sport_name)
 
     with st.expander("📊 Detaylar & 🤖 Tekli AI Tahmini"):
         if is_football:
