@@ -3,6 +3,7 @@ import requests
 import os
 from dotenv import load_dotenv
 from datetime import datetime, date, timezone, timedelta
+import datetime as dt_module
 import time
 import re
 
@@ -773,7 +774,7 @@ def show_ai(text,err,p,model_name,sname=None,show_tokens=True):
     token_info=f' <span style="font-size:11px;opacity:.5">~{tokens} token</span>' if show_tokens else ""
     st.markdown(f'<div class="ai-box">🤖 <b>{model_name}</b>{token_info}<br><br>{text}</div>',unsafe_allow_html=True)
     # Save to history
-    import datetime as dt_module
+
     st.session_state.analysis_history.append({
         "time": dt_module.datetime.now(TZ_TR).strftime("%H:%M"),
         "sport": sname,
@@ -847,27 +848,8 @@ def compare_all_models(prompt,p,_sport_name=""):
                     <div style="font-size:11px;opacity:.7;margin-top:4px">{detail}</div>
                 </div>''', unsafe_allow_html=True)
 
-    # Detaylı analizler - toggle button (checkbox değil, çalışmıyor diye kaldırıldı)
-    import datetime as dt_module
-    det_cmp_key = f"det_cmp_{p['mid']}"
-    if det_cmp_key not in st.session_state:
-        st.session_state[det_cmp_key] = False
-    arrow = "🔽" if st.session_state[det_cmp_key] else "▶️"
-    if st.button(f"{arrow} Detaylı analizleri göster/gizle", key=f"det_cmp_btn_{p['mid']}"):
-        st.session_state[det_cmp_key] = not st.session_state[det_cmp_key]
-    if st.session_state[det_cmp_key]:
-        st.markdown("### 📋 Detaylı Analizler")
-        for model_name,res in results.items():
-            color={"groq":"#EF9F27","gemini":"#22c55e","gpt":"#378ADD","deepseek":"#E24B4A"}.get(AI_MODELS[model_name]["id"],"#888")
-            st.markdown(f"**{model_name}**")
-            if res["err"]:
-                st.error(res["err"])
-            elif res["text"]:
-                tokens=estimate_tokens(res["text"])
-                st.markdown(f'<div class="ai-box" style="border-color:{color}55">{res["text"]}<br><span style="font-size:11px;opacity:.4">~{tokens} token</span></div>',unsafe_allow_html=True)
-            st.markdown("---")
-    
     # Save to history (always)
+
     for model_name,res in results.items():
         if res.get("text") and not res.get("err"):
             pred=extract_pred(res["text"],_sport_name)
@@ -1109,13 +1091,7 @@ En az 80 maç listele."""
                             sub_html = "".join([f'<div style="font-size:11px;opacity:.7">{k}: {v}</div>' for k,v in sub.items()]) if sub else ""
                             if pred:
                                 st.markdown(f'<div class="pred-box"><div class="pred-label">🔮 TAHMİN</div><div class="pred-score">{pred}</div><div class="pred-label">{home} – {away}</div>{sub_html}</div>', unsafe_allow_html=True)
-                            det_k = f"det_gem_{i}"
-                            if det_k not in st.session_state: st.session_state[det_k] = False
-                            a2 = "🔽" if st.session_state[det_k] else "▶️"
-                            if st.button(f"{a2} Analizi göster/gizle", key=f"det_gem_btn_{i}"):
-                                st.session_state[det_k] = not st.session_state[det_k]
-                            if st.session_state[det_k]:
-                                st.markdown(f'<div class="ai-box">{text}</div>', unsafe_allow_html=True)
+                            st.markdown(f'<div class="ai-box">{text}</div>', unsafe_allow_html=True)
                         elif err: st.error(err)
                     else:
                         compare_all_models(prompt, p_fake, _sport_name=sport_name)
@@ -1327,15 +1303,8 @@ def match_card(p,raw_list):
                 st.session_state[qtype_key] = "compare"
                 compare_all_models(q_prompt, p, _sport_name=sport_name)
 
-    # ── Detaylar toggle (expander yerine — kapanma sorunu YOK) ──
-    det_exp_key = f"det_exp_{mk}"
-    if det_exp_key not in st.session_state:
-        st.session_state[det_exp_key] = False
-    if st.button(f"{'🔽' if st.session_state[det_exp_key] else '▶️'} Detaylar & Tekli AI Tahmini", key=f"det_toggle_{mk}"):
-        st.session_state[det_exp_key] = not st.session_state[det_exp_key]
-
-    if st.session_state[det_exp_key]:
-        if is_football:
+    # ── Detaylar (her zaman açık, toggle kaldırıldı) ──
+    if is_football:
             t1,t2,t3=st.tabs(["📈 İstatistikler","⚡ Olaylar","🤖 AI Tahmini"])
             with t1:
                 if p["sh"]=="NS": st.info("Maç başlamadı.")
@@ -1371,7 +1340,6 @@ def match_card(p,raw_list):
                 btn1,btn2=st.columns(2)
                 with btn1: do_single=st.button("🤖 Seçili Model",key=f"ai_{mk}")
                 with btn2: do_compare=st.button("⚡ Tüm Modeller Karşılaştır",key=f"cmp_{mk}")
-                # Web search - her zaman görünür, Gemini bilgileri diğer modellere de aktarılır
                 use_ws = st.checkbox("🌐 Gemini ile güncel haber/sakat bilgisi çek (tüm modeller kullanır)", key=f"ws_{mk}", value=False)
 
                 if do_single or do_compare:
@@ -1391,7 +1359,6 @@ def match_card(p,raw_list):
                         prompt = football_prompt(raw,sd,ed,hf,af,hs,as_,inj_h,inj_a,h2h,stand,pred) if raw else \
                                  generic_prompt(sport_name,p["home"],p["away"],p["status_txt"],p["league"])
 
-                    # Gemini web araması - otomatik, sonuç expander'da
                     if use_ws and GEMINI_KEY:
                         news_key = f"news_{p['mid']}"
                         if news_key not in st.session_state:
@@ -1409,7 +1376,7 @@ def match_card(p,raw_list):
                         show_ai(text,err,p,ai_model,sname=sport_name)
                     else:
                         compare_all_models(prompt,p,_sport_name=sport_name)
-        else:
+    else:
             t1,t2=st.tabs(["📋 Bilgi","🤖 AI Tahmini"])
             with t1:
                 raw=p.get("raw",{})
