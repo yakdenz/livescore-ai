@@ -836,17 +836,20 @@ with st.sidebar:
         st.rerun()
     st.caption("API-Sports ücretsiz\n100 istek/gün/branş")
 
-# ── BRANŞ SEÇİCİ (radio yatay - maç öncesi sekmeleri gibi) ──────
+# ── BRANŞ SEÇİCİ - st.tabs ───────────────────────────────────────
 sport_list = list(SPORT_CONFIG.keys())
 sport_labels = [f"{SPORT_CONFIG[s]['emoji']} {s.split()[-1]}" for s in sport_list]
 _sel_idx = sport_list.index(sport_name) if sport_name in sport_list else 0
-_chosen = st.radio("Branş", sport_labels, index=_sel_idx, horizontal=True,
-                   label_visibility="collapsed", key="sport_radio_main")
-_new_sport = sport_list[sport_labels.index(_chosen)]
-if _new_sport != sport_name:
-    st.session_state.sport_name = _new_sport
-    st.rerun()
-st.caption(f"{sel_date.strftime('%d %B %Y')} · {ai_model.split()[1] if len(ai_model.split())>1 else ai_model.split()[0]}")
+_sport_tabs = st.tabs(sport_labels)
+# Detect which tab was clicked by checking active tab via session
+for _ti, _st_tab in enumerate(_sport_tabs):
+    with _st_tab:
+        if _ti == _sel_idx:
+            st.caption(f"{sel_date.strftime('%d %B %Y')} · {ai_model.split()[1] if len(ai_model.split())>1 else ai_model.split()[0]}")
+        else:
+            if st.button(f"{sport_labels[_ti]} seç", key=f"stab_{_ti}"):
+                st.session_state.sport_name = sport_list[_ti]
+                st.rerun()
 
 if not API_KEY or "buraya" in API_KEY:
     st.error("⚠️ `.env` dosyasına `API_SPORTS_KEY` ekle."); st.stop()
@@ -1077,13 +1080,22 @@ if all_countries:
                      "Czech Republic":"🇨🇿","Sweden":"🇸🇪","Norway":"🇳🇴","Denmark":"🇩🇰","Switzerland":"🇨🇭"}
     
     sel_country = st.session_state.get(country_filter_key, "Hepsi")
-    shown = ordered[:10]
+    shown = ordered[:6]  # max 6 for tabs to fit
     _c_idx = shown.index(sel_country) if sel_country in shown else 0
-    _new_c = st.radio("Ülke", shown, index=_c_idx, horizontal=True,
-                      label_visibility="collapsed", key=f"cradio_{sport_name}")
-    if _new_c != sel_country:
-        st.session_state[country_filter_key] = _new_c
-        st.rerun()
+    _c_tabs = st.tabs(shown)
+    for _cti, _ct in enumerate(_c_tabs):
+        with _ct:
+            if shown[_cti] != sel_country:
+                if st.button(f"Seç", key=f"ctab_{sport_name}_{_cti}"):
+                    st.session_state[country_filter_key] = shown[_cti]
+                    st.rerun()
+    # Also a selectbox for more countries
+    if len(ordered) > 6:
+        _more = st.selectbox("Daha fazla ülke", ["—"] + ordered[6:],
+                             label_visibility="collapsed", key=f"cmore_{sport_name}")
+        if _more != "—":
+            st.session_state[country_filter_key] = _more
+            st.rerun()
     if sel_country != "Hepsi":
         pre_all = [p for p in pre_all if p.get("country","") == sel_country]
 
