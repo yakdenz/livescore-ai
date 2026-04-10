@@ -155,6 +155,27 @@ def fetch_tstat(tid,lid,season):
     d=api_get("https://v3.football.api-sports.io/teams/statistics",{"team":tid,"league":lid,"season":season})
     return d.get("response",{}) if d else {}
 
+@st.cache_data(ttl=3600, show_spinner=False)
+def fetch_injuries(tid,season):
+    d=api_get("https://v3.football.api-sports.io/injuries",{"team":tid,"season":season})
+    return d.get("response",[]) if d else []
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def fetch_h2h(h_id,a_id):
+    d=api_get("https://v3.football.api-sports.io/fixtures/headtohead",{"h2h":f"{h_id}-{a_id}","last":5})
+    return d.get("response",[]) if d else []
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def fetch_standings(lid,season):
+    d=api_get("https://v3.football.api-sports.io/standings",{"league":lid,"season":season})
+    try: return d["response"][0]["league"]["standings"][0] if d else []
+    except: return []
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def fetch_predictions(fid):
+    d=api_get("https://v3.football.api-sports.io/predictions",{"fixture":fid})
+    return d.get("response",[{}])[0] if d else {}
+
 # ── AI ────────────────────────────────────────────────────────────
 def call_groq(prompt):
     if not GROQ_KEY: return None,"⚠️ Groq key bulunamadı (.env → GROQ_API_KEY)"
@@ -168,12 +189,20 @@ def call_groq(prompt):
     except Exception as e:
         return None,f"Groq hatası: {e}"
 
-def call_gemini(prompt):
+def call_gemini(prompt, use_search=False):
     if not GEMINI_KEY: return None,"⚠️ Gemini key bulunamadı (.env → GEMINI_API_KEY)"
     try:
         from google import genai
-        r=genai.Client(api_key=GEMINI_KEY).models.generate_content(model="gemini-2.0-flash",contents=prompt)
-        return r.text,None
+        from google.genai import types
+        client = genai.Client(api_key=GEMINI_KEY)
+        if use_search:
+            search_tool = types.Tool(google_search=types.GoogleSearch())
+            config = types.GenerateContentConfig(tools=[search_tool])
+            r = client.models.generate_content(
+                model="gemini-2.0-flash", contents=prompt, config=config)
+        else:
+            r = client.models.generate_content(model="gemini-2.0-flash", contents=prompt)
+        return r.text, None
     except Exception as e:
         err=str(e)
         if any(x in err for x in ["429","quota","EXHAUSTED"]):
@@ -204,10 +233,10 @@ def call_gpt(prompt):
     except Exception as e:
         return None,f"GPT hatası: {e}"
 
-def run_ai(prompt, model_name):
+def run_ai(prompt, model_name, use_web_search=False):
     mid=AI_MODELS[model_name]["id"]
-    if mid=="groq":   return call_groq(prompt)
-    if mid=="gemini": return call_gemini(prompt)
+    if mid=="groq":     return call_groq(prompt)
+    if mid=="gemini":   return call_gemini(prompt, use_search=use_web_search)
     if mid=="deepseek": return call_deepseek(prompt)
     if mid=="gpt":      return call_gpt(prompt)
     return None,"Model bulunamadı"
@@ -243,7 +272,44 @@ def season_str(ts,name):
     fm=ts.get("form","")[-10:] if ts.get("form") else ""
     return f"{name}: {w}G/{d}B/{l}M | Ort {sc} attı / {cn} yedi | Form: {fm}"
 
-def football_prompt(match,stats,events,hf,af,hs,as_):
+def injuries_txt(injuries, team_name):
+    if not injuries: return ""
+    aktif = [i for i in injuries if i.get("player") and i.get("reason")]
+    if not aktif: return ""
+    lines = [f"  - {i['player']['name']} ({i.get('reason','?')})" for i in aktif[:5]]
+    return team_name + " sakatlıklar:\n" + "\n".join(lines)
+
+def h2h_txt(h2h_matches):
+    if not h2h_matches: return ""
+    lines = []
+    for m in h2h_matches[-5:]:
+        ht = m["teams"]["home"]["name"]; at = m["teams"]["away"]["name"]
+        hg = m["goals"]["home"] or 0; ag = m["goals"]["away"] or 0
+        dt = m["fixture"]["date"][:10]
+        lines.append(f"  {dt}: {ht} {hg}-{ag} {at}")
+    return "Son karşılaşmalar (H2H):\n" + "\n".join(lines)
+
+def standings_txt(standings, home_id, away_id):
+    if not standings: return ""
+    h_row = next((s for s in standings if s["team"]["id"]==home_id), None)
+    a_row = next((s for s in standings if s["team"]["id"]==away_id), None)
+    parts = []
+    if h_row: parts.append(f"  {h_row['team']['name']}: {h_row['rank']}. sira, {h_row['points']} puan")
+    if a_row: parts.append(f"  {a_row['team']['name']}: {a_row['rank']}. sira, {a_row['points']} puan")
+    return ("Puan durumu:\n" + "\n".join(parts)) if parts else ""
+
+def predictions_txt(pred):
+    if not pred: return ""
+    try:
+        winner = pred.get("predictions",{}).get("winner",{})
+        pct = pred.get("predictions",{}).get("percent",{})
+        w_name = winner.get("name","?")
+        home_pct = pct.get("home","?"); draw_pct = pct.get("draws","?"); away_pct = pct.get("away","?")
+        advice = pred.get("predictions",{}).get("advice","")
+        return f"API Tahmini: {w_name} kazanır | Ev%{home_pct} Beraberlik%{draw_pct} Deplasman%{away_pct} | {advice}"
+    except: return ""
+
+def football_prompt(match,stats,events,hf,af,hs,as_,inj_h=None,inj_a=None,h2h=None,standings=None,pred=None):
     home=match["teams"]["home"]["name"]; away=match["teams"]["away"]["name"]
     hid=match["teams"]["home"]["id"];   aid=match["teams"]["away"]["id"]
     h_g=match["goals"]["home"] if match["goals"]["home"] is not None else "-"
@@ -472,14 +538,17 @@ def compare_all_models(prompt,p):
                     <div style="font-size:18px;font-weight:700;color:{color}">?</div>
                 </div>""",unsafe_allow_html=True)
 
-    # Detaylı analizler expander içinde
+    # Detaylı analizler - doğrudan göster
     st.markdown("### 📋 Detaylı Analizler")
     for model_name,res in results.items():
-        with st.expander(f"{model_name} — Tam Analiz"):
-            if res["err"]: st.error(res["err"])
-            elif res["text"]:
-                tokens=estimate_tokens(res["text"])
-                st.markdown(f'<div class="ai-box">{res["text"]}</div> <span style="font-size:11px;opacity:.5">~{tokens} token</span>',unsafe_allow_html=True)
+        color={"groq":"#EF9F27","gemini":"#22c55e","gpt":"#378ADD","deepseek":"#E24B4A"}.get(AI_MODELS[model_name]["id"],"#888")
+        st.markdown(f"**{model_name}**")
+        if res["err"]: 
+            st.error(res["err"])
+        elif res["text"]:
+            tokens=estimate_tokens(res["text"])
+            st.markdown(f'<div class="ai-box" style="border-color:{color}55">{res["text"]}<br><span style="font-size:11px;opacity:.4">~{tokens} token</span></div>',unsafe_allow_html=True)
+        st.markdown("---")
 
 # ── SIDEBAR ───────────────────────────────────────────────────────
 with st.sidebar:
@@ -651,19 +720,29 @@ def match_card(p,raw_list):
                 btn1,btn2=st.columns(2)
                 with btn1: do_single=st.button("🤖 Seçili Model",key=f"ai_{mk}")
                 with btn2: do_compare=st.button("⚡ Tüm Modeller Karşılaştır",key=f"cmp_{mk}")
+                # Web search toggle (only for Gemini)
+                use_ws = False
+                if "Gemini" in ai_model:
+                    use_ws = st.checkbox("🌐 Gemini web araması yapsın (güncel haberler)", key=f"ws_{mk}", value=False)
+
                 if do_single or do_compare:
-                    with st.spinner("Veri toplanıyor..."):
-                        sd=fetch_stats(p["mid"]) if p["sh"]!="NS" else []
-                        ed=fetch_events(p["mid"]) if p["sh"]!="NS" else []
-                        hf=fetch_form(p["hid"],p["lid"],p["season"])
-                        af=fetch_form(p["aid"],p["lid"],p["season"])
-                        hs=fetch_tstat(p["hid"],p["lid"],p["season"])
-                        as_=fetch_tstat(p["aid"],p["lid"],p["season"])
-                        raw=next((m for m in raw_list if m["fixture"]["id"]==p["mid"]),None)
-                        prompt=football_prompt(raw,sd,ed,hf,af,hs,as_) if raw else \
-                               generic_prompt(sport_name,p["home"],p["away"],p["status_txt"],p["league"])
+                    with st.spinner("Veri toplanıyor... (sakat/H2H/puan durumu çekiliyor)"):
+                        sd   = fetch_stats(p["mid"])  if p["sh"]!="NS" else []
+                        ed   = fetch_events(p["mid"]) if p["sh"]!="NS" else []
+                        hf   = fetch_form(p["hid"],p["lid"],p["season"])
+                        af   = fetch_form(p["aid"],p["lid"],p["season"])
+                        hs   = fetch_tstat(p["hid"],p["lid"],p["season"])
+                        as_  = fetch_tstat(p["aid"],p["lid"],p["season"])
+                        inj_h= fetch_injuries(p["hid"],p["season"])
+                        inj_a= fetch_injuries(p["aid"],p["season"])
+                        h2h  = fetch_h2h(p["hid"],p["aid"])
+                        stand= fetch_standings(p["lid"],p["season"])
+                        pred = fetch_predictions(p["mid"])
+                        raw  = next((m for m in raw_list if m["fixture"]["id"]==p["mid"]),None)
+                        prompt = football_prompt(raw,sd,ed,hf,af,hs,as_,inj_h,inj_a,h2h,stand,pred) if raw else \
+                                 generic_prompt(sport_name,p["home"],p["away"],p["status_txt"],p["league"])
                     if do_single:
-                        text,err=run_ai(prompt,ai_model)
+                        text,err=run_ai(prompt,ai_model,use_web_search=use_ws)
                         show_ai(text,err,p,ai_model)
                     else:
                         compare_all_models(prompt,p)
