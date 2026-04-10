@@ -841,21 +841,36 @@ with st.sidebar:
         st.rerun()
     st.caption("API-Sports ücretsiz\n100 istek/gün/branş")
 
-# ── BRANŞ SEÇİCİ (yatay radio) ───────────────────────────────────
+# ── BRANŞ SEÇİCİ ─────────────────────────────────────────────────
 sport_list = list(SPORT_CONFIG.keys())
-# Short display names for radio
-sport_display = []
+sport_short = []
 for s in sport_list:
     words = s.split()
-    short = words[-1] if len(words) > 1 else s  # last word: Futbol, Basketbol, Tenis...
-    sport_display.append(f"{SPORT_CONFIG[s]['emoji']} {short}")
+    short = words[-1] if len(words) > 1 else s
+    sport_short.append(short)
 
-sel_idx = sport_list.index(sport_name) if sport_name in sport_list else 0
-chosen = st.radio("", sport_display, index=sel_idx, horizontal=True, 
-                  label_visibility="collapsed", key="sport_radio")
-chosen_sport = sport_list[sport_display.index(chosen)]
-if chosen_sport != sport_name:
-    st.session_state.sport_name = chosen_sport
+# Selectbox hidden, pills trigger rerun via query params workaround
+# Use simple selectbox but style it as pills with st.columns workaround
+# Best approach: use streamlit's built-in but trigger via buttons in a flex container
+_sel_idx = sport_list.index(sport_name) if sport_name in sport_list else 0
+
+# Render as inline buttons using markdown + hidden selectbox trick
+pills_html = '<div style="display:flex;flex-wrap:nowrap;overflow-x:auto;gap:6px;padding:4px 0 8px 0;scrollbar-width:none;-ms-overflow-style:none">'
+for _s, _short in zip(sport_list, sport_short):
+    _cfg = SPORT_CONFIG[_s]
+    if _s == sport_name:
+        pills_html += f'<span style="background:#378ADD;color:white;border-radius:20px;padding:5px 12px;font-size:13px;white-space:nowrap;flex-shrink:0">{_cfg["emoji"]} {_short}</span>'
+    else:
+        pills_html += f'<span style="background:var(--color-background-secondary);border:1px solid var(--color-border-tertiary);border-radius:20px;padding:5px 12px;font-size:13px;white-space:nowrap;flex-shrink:0;color:var(--color-text-secondary)">{_cfg["emoji"]} {_short}</span>'
+pills_html += '</div>'
+st.markdown(pills_html, unsafe_allow_html=True)
+
+# Actual selector (hidden label)
+_new_sport = st.selectbox("Branş seç", sport_list, index=_sel_idx,
+                          format_func=lambda s: f"{SPORT_CONFIG[s]['emoji']} {s.split()[-1]}",
+                          label_visibility="collapsed", key="sport_sel_main")
+if _new_sport != sport_name:
+    st.session_state.sport_name = _new_sport
     st.rerun()
 
 st.caption(f"{sel_date.strftime('%d %B %Y')} · {ai_model.split()[1] if len(ai_model.split())>1 else ai_model.split()[0]}")
@@ -1066,18 +1081,27 @@ if all_countries:
                      "Czech Republic":"🇨🇿","Sweden":"🇸🇪","Norway":"🇳🇴","Denmark":"🇩🇰","Switzerland":"🇨🇭"}
     
     sel_country = st.session_state.get(country_filter_key, "Hepsi")
-    # Scrollable country buttons
-    shown = ordered[:12]
-    c_cols = st.columns(len(shown))
-    for _ci, _c in enumerate(shown):
-        with c_cols[_ci]:
-            _icon = country_icons.get(_c,"🌍") if _c != "Hepsi" else "🌍"
-            _active = _c == sel_country
-            if st.button(_icon, key=f"cntry_{sport_name}_{_ci}", 
-                        help=_c, use_container_width=True,
-                        type="primary" if _active else "secondary"):
-                st.session_state[country_filter_key] = _c
-                st.rerun()
+    shown = ordered[:15]
+    
+    # Scrollable pills for countries
+    c_pills = '<div style="display:flex;flex-wrap:nowrap;overflow-x:auto;gap:4px;padding:2px 0 6px 0;scrollbar-width:none">'
+    for _c in shown:
+        _icon = country_icons.get(_c,"🌍") if _c != "Hepsi" else "🌍"
+        if _c == sel_country:
+            c_pills += f'<span style="background:#378ADD;color:white;border-radius:16px;padding:3px 10px;font-size:12px;white-space:nowrap;flex-shrink:0">{_icon}</span>'
+        else:
+            c_pills += f'<span style="background:var(--color-background-secondary);border:1px solid var(--color-border-tertiary);border-radius:16px;padding:3px 10px;font-size:12px;white-space:nowrap;flex-shrink:0">{_icon}</span>'
+    c_pills += '</div>'
+    st.markdown(c_pills, unsafe_allow_html=True)
+    
+    # Hidden selectbox for actual selection
+    _c_idx = shown.index(sel_country) if sel_country in shown else 0
+    _new_c = st.selectbox("Ülke", shown, index=_c_idx,
+                          format_func=lambda c: f"{country_icons.get(c,'🌍')} {c}" if c!="Hepsi" else "🌍 Hepsi",
+                          label_visibility="collapsed", key=f"csel_{sport_name}")
+    if _new_c != sel_country:
+        st.session_state[country_filter_key] = _new_c
+        st.rerun()
     
     if sel_country != "Hepsi":
         pre_all = [p for p in pre_all if p.get("country","") == sel_country]
