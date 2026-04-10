@@ -247,7 +247,7 @@ def extract_pred(text, sport):
     big=any(w in sport.lower() for w in ["basket","nba","hokey","hockey","voleybol"])
 
     # Search in final-score specific lines first
-    final_keywords = ["final tahmin","maç tahmin","tahmin edilen skor","tahmin: ","sonuç tahmin","biteceğ","final skor"]
+    final_keywords = ["final tahmin","maç tahmin","tahmin edilen skor","tahmin: ","sonuç tahmin","biteceğ","final skor","🔮","fİnal","fİnAl","tahmin edilen"]
     final_lines = " ".join(l for l in text.split("\n") if any(w in l.lower() for w in final_keywords))
 
     # Exclude quarter/set/half lines
@@ -257,6 +257,10 @@ def extract_pred(text, sport):
         # Basketball/hockey: 2-3 digit scores
         pat = r'\b(\d{2,3})\s*[-–]\s*(\d{2,3})\b'
         # Look in final score lines, excluding small period scores
+        # Also search entire text for "tahmin edilen skor: X-Y" pattern directly
+        direct = re.search(r'(?:tahmin edilen skor|tahmin)[:\s]+([0-9]{2,3})\s*[-–]\s*([0-9]{2,3})', text, re.IGNORECASE)
+        if direct:
+            return f"{direct.group(1)} – {direct.group(2)}"
         for src in [final_lines, text]:
             for m in re.finditer(pat, src):
                 line_start = src.rfind("\n", 0, m.start()) + 1
@@ -265,9 +269,14 @@ def extract_pred(text, sport):
                 line = src[line_start:line_end].lower()
                 if any(w in line for w in exclude_keywords): continue
                 a,b = int(m.group(1)), int(m.group(2))
-                if a > 200 or b > 200: continue  # sanity check
+                if a > 200 or b > 200: continue
                 return f"{a} – {b}"
     else:
+        # Direct pattern search first
+        direct = re.search(r'(?:tahmin edilen skor|tahmin)[:\s]+([0-9]{1,2})\s*[-–]\s*([0-9]{1,2})', text, re.IGNORECASE)
+        if direct:
+            return f"{direct.group(1)} – {direct.group(2)}"
+        is_set_sport = any(w in sport.lower() for w in ["voleybol","hentbol","rugby"])
         pat = r'\b([0-9]{1,2})\s*[-–]\s*([0-9]{1,2})\b'
         for src in [final_lines, text]:
             for m in re.finditer(pat, src):
@@ -277,8 +286,13 @@ def extract_pred(text, sport):
                 line = src[line_start:line_end].lower()
                 if any(w in line for w in exclude_keywords): continue
                 a,b = int(m.group(1)), int(m.group(2))
-                if a > 20 or b > 20: continue
-                return f"{a} – {b}"
+                if is_set_sport:
+                    # Voleybol: set sayısı 0-3 arası VEYA 20-30 arası set skoru
+                    if (a <= 3 and b <= 3) or (20 <= a <= 35 and 20 <= b <= 35):
+                        return f"{a} – {b}"
+                else:
+                    if a > 20 or b > 20: continue
+                    return f"{a} – {b}"
     return None
 
 def extract_sub_pred(text, sport):
@@ -803,13 +817,11 @@ def match_card(p,raw_list):
                 btn1,btn2=st.columns(2)
                 with btn1: do_single=st.button("🤖 Seçili Model",key=f"ai_{mk}")
                 with btn2: do_compare=st.button("⚡ Tüm Modeller Karşılaştır",key=f"cmp_{mk}")
-                # Web search toggle (only for Gemini)
-                use_ws = False
-                if "Gemini" in ai_model:
-                    use_ws = st.checkbox("🌐 Gemini web araması yapsın (güncel haberler)", key=f"ws_{mk}", value=False)
+                # Web search - her zaman görünür, Gemini bilgileri diğer modellere de aktarılır
+                use_ws = st.checkbox("🌐 Gemini ile güncel haber/sakat bilgisi çek (tüm modeller kullanır)", key=f"ws_{mk}", value=False)
 
                 if do_single or do_compare:
-                    with st.spinner("Veri toplanıyor... (sakat/H2H/puan durumu çekiliyor)"):
+                    with st.spinner("Veri toplanıyor..."):
                         sd   = fetch_stats(p["mid"])  if p["sh"]!="NS" else []
                         ed   = fetch_events(p["mid"]) if p["sh"]!="NS" else []
                         hf   = fetch_form(p["hid"],p["lid"],p["season"])
@@ -824,8 +836,18 @@ def match_card(p,raw_list):
                         raw  = next((m for m in raw_list if m["fixture"]["id"]==p["mid"]),None)
                         prompt = football_prompt(raw,sd,ed,hf,af,hs,as_,inj_h,inj_a,h2h,stand,pred) if raw else \
                                  generic_prompt(sport_name,p["home"],p["away"],p["status_txt"],p["league"])
+
+                    # Gemini web araması yapılacaksa önce haber çek, prompta ekle
+                    if use_ws and GEMINI_KEY:
+                        with st.spinner("🌐 Gemini güncel haberler arıyor..."):
+                            news_prompt = f"{p['home']} vs {p['away']} maçı hakkında güncel haberler, sakat oyuncular ve son gelişmeleri Türkçe özetle. Maksimum 3 madde."
+                            news_text, news_err = call_gemini(news_prompt, use_search=True)
+                        if news_text and not news_err:
+                            st.info(f"🌐 **Güncel Haberler:** {news_text}")
+                            prompt = prompt + f"\n\nGÜNCEL HABERLER (Gemini web araması):\n{news_text}"
+
                     if do_single:
-                        text,err=run_ai(prompt,ai_model,use_web_search=use_ws)
+                        text,err=run_ai(prompt,ai_model)
                         show_ai(text,err,p,ai_model,sname=sport_name)
                     else:
                         compare_all_models(prompt,p,_sport_name=sport_name)
@@ -854,8 +876,16 @@ def match_card(p,raw_list):
                 btn1,btn2=st.columns(2)
                 with btn1: do_single2=st.button("🤖 Seçili Model",key=f"ai_{mk}")
                 with btn2: do_compare2=st.button("⚡ Tüm Modeller",key=f"cmp_{mk}")
+                use_ws2 = st.checkbox("🌐 Gemini ile güncel haber çek (tüm modeller kullanır)", key=f"ws_{mk}", value=False)
                 if do_single2 or do_compare2:
                     prompt=generic_prompt(sport_name,p["home"],p["away"],p["status_txt"],p["league"])
+                    if use_ws2 and GEMINI_KEY:
+                        with st.spinner("🌐 Gemini güncel haberler arıyor..."):
+                            news_prompt = f"{p['home']} vs {p['away']} ({sport_name}) maçı hakkında güncel haberler, sakat oyuncular ve son gelişmeleri Türkçe özetle. Maksimum 3 madde."
+                            news_text, news_err = call_gemini(news_prompt, use_search=True)
+                        if news_text and not news_err:
+                            st.info(f"🌐 **Güncel Haberler:** {news_text}")
+                            prompt = prompt + f"\n\nGÜNCEL HABERLER (Gemini web araması):\n{news_text}"
                     if do_single2:
                         with st.spinner("AI analiz yapıyor..."): text,err=run_ai(prompt,ai_model)
                         show_ai(text,err,p,ai_model,sname=sport_name)
@@ -925,38 +955,66 @@ with tab_hist:
     if not hist:
         st.info("Henüz analiz yapılmadı. Maç kartlarından AI tahmini al.")
     else:
-        # Clear button
         if st.button("🗑️ Geçmişi Temizle"):
             st.session_state.analysis_history = []
             st.rerun()
 
-        st.markdown(f"**Toplam {len(hist)} analiz yapıldı**")
+        # Group by match (home+away+time)
+        from collections import defaultdict
+        groups = defaultdict(list)
+        for h in hist:
+            key = f"{h['home']}_{h['away']}_{h['time'][:5]}"
+            groups[key].append(h)
+
+        st.markdown(f"**{len(groups)} maç · {len(hist)} analiz**")
         st.markdown("---")
 
-        # Show in reverse order (newest first)
-        for i, h in enumerate(reversed(hist)):
-            col1,col2,col3,col4 = st.columns([1,3,2,1.5])
-            with col1:
-                st.markdown(f"**{h['time']}**")
-                st.caption(h['sport'])
-            with col2:
-                st.markdown(f"**{h['home']} – {h['away']}**")
-                st.caption(h['league'])
-            with col3:
-                color={"🟡 Groq – Llama 3.3":"#EF9F27","🟢 Gemini 2.0 Flash":"#22c55e",
-                       "⚪ GPT-4o Mini":"#378ADD","🔴 DeepSeek V3":"#E24B4A"}.get(h.get("model",""),"#888")
-                pred = h.get("pred","?")
-                st.markdown(f'<div style="font-size:22px;font-weight:900;color:{color}">{pred}</div>',
-                            unsafe_allow_html=True)
-                sub = h.get("sub_pred",{})
-                if sub:
-                    for k,v in sub.items():
-                        st.caption(f"{k}: {v}")
-                st.caption(h["model"].split()[0] + " " + h["model"].split()[1] if len(h.get("model","").split())>1 else h.get("model",""))
-            with col4:
-                st.caption(f"~{h['tokens']} token")
+        MODEL_COLORS = {
+            "🟡 Groq – Llama 3.3": "#EF9F27",
+            "🟢 Gemini 2.0 Flash": "#22c55e",
+            "⚪ GPT-4o Mini": "#378ADD",
+            "🔴 DeepSeek V3": "#E24B4A"
+        }
+        MODEL_SHORT = {
+            "🟡 Groq – Llama 3.3": "Groq",
+            "🟢 Gemini 2.0 Flash": "Gemini",
+            "⚪ GPT-4o Mini": "GPT",
+            "🔴 DeepSeek V3": "DeepSeek"
+        }
 
-            with st.expander("Tam analizi gör"):
-                st.markdown(f'<div class="ai-box">{h["text"]}</div>', unsafe_allow_html=True)
+        for key, items in reversed(list(groups.items())):
+            h0 = items[0]
+            # Header row
+            hc1,hc2 = st.columns([3,7])
+            with hc1:
+                st.markdown(f"**{h0['time']}** · {h0['sport']}")
+                st.caption(f"{h0['league']}")
+            with hc2:
+                st.markdown(f"### {h0['home']} – {h0['away']}")
+
+            # Model predictions in one row
+            pred_cols = st.columns(len(items))
+            for i, h in enumerate(items):
+                with pred_cols[i]:
+                    color = MODEL_COLORS.get(h["model"],"#888")
+                    short = MODEL_SHORT.get(h["model"], h["model"].split()[0])
+                    pred = h.get("pred","?")
+                    sub = h.get("sub_pred",{})
+                    sub_html = ""
+                    if sub:
+                        sub_html = "".join([f'<div style="font-size:10px;opacity:.7">{k}: {v}</div>' for k,v in sub.items()])
+                    st.markdown(f'''<div style="border:1.5px solid {color};border-radius:10px;padding:8px;text-align:center">
+                        <div style="font-size:10px;color:{color};opacity:.8">{short}</div>
+                        <div style="font-size:20px;font-weight:900;color:{color}">{pred}</div>
+                        {sub_html}
+                    </div>''', unsafe_allow_html=True)
+
+            # Detailed analyses in expander
+            with st.expander("Tam analizleri gör"):
+                for h in items:
+                    color = MODEL_COLORS.get(h["model"],"#888")
+                    short = MODEL_SHORT.get(h["model"], h["model"])
+                    st.markdown(f"**{short}** · ~{h['tokens']} token")
+                    st.markdown(f'<div class="ai-box" style="border-color:{color}55;margin-bottom:8px">{h["text"]}</div>', unsafe_allow_html=True)
 
             st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
