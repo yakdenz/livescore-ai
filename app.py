@@ -5,7 +5,6 @@ from dotenv import load_dotenv
 from datetime import datetime, date, timezone, timedelta
 import time
 import re
-import html
 
 load_dotenv()
 
@@ -15,12 +14,7 @@ def get_secret(key):
     except:
         return os.getenv(key, "")
 
-st.set_page_config(
-    page_title="Canlı Skor + AI",
-    page_icon="⚽",
-    layout="centered",
-    initial_sidebar_state="collapsed"
-)
+st.set_page_config(page_title="Canlı Skor + AI", page_icon="⚽", layout="wide", initial_sidebar_state="expanded")
 
 st.markdown("""
 <style>
@@ -58,14 +52,27 @@ st.markdown("""
   opacity:0;transition:opacity .25s,transform .2s;pointer-events:none;transform:scale(.8)
 }
 #scroll-top-btn.visible{opacity:1;pointer-events:auto;transform:scale(1)}
-.mobile-stack-gap{margin-top:8px}
+/* ── BUTONLAR: MOBİLDE YAN YANA ── */
+div[data-testid="stHorizontalBlock"] > div[data-testid="stColumn"] {
+  flex: 1 1 0 !important;
+  min-width: 0 !important;
+}
+div[data-testid="stHorizontalBlock"] > div[data-testid="stColumn"] > div > div > button {
+  width: 100% !important;
+  padding: 0.25rem 0.3rem !important;
+  font-size: 12px !important;
+  white-space: nowrap !important;
+  overflow: hidden !important;
+}
 @media(max-width:768px){
   .team-name{font-size:13px}
   .score-box{font-size:20px}
   .pred-score{font-size:22px}
   .ai-box{font-size:13px;padding:10px}
-  .news-box,.bulk-result{font-size:12px}
-  div[data-testid="stSidebar"]{min-width:unset !important}
+  div[data-testid="stHorizontalBlock"] > div[data-testid="stColumn"] > div > div > button {
+    font-size: 11px !important;
+    padding: 0.2rem 0.2rem !important;
+  }
 }
 </style>
 """, unsafe_allow_html=True)
@@ -141,14 +148,6 @@ for k,v in [("bulk_results",{}),("selected",set()),("live_loaded",False),("live_
 # Type safety - ensure gemini_fallback is always a dict
 if not isinstance(st.session_state.gemini_fallback, dict):
     st.session_state.gemini_fallback = {}
-
-
-def mobile_columns(spec):
-    """
-    Fallback helper. Returns normal Streamlit columns.
-    Keeps the rest of the code working on mobile without NameError.
-    """
-    return st.columns(spec)
 
 # ── HELPERS ───────────────────────────────────────────────────────
 def get_sh(m, sk):
@@ -578,23 +577,22 @@ def football_prompt(match,stats,events,hf,af,hs,as_,inj_h=None,inj_a=None,h2h=No
     return f"""Sen profesyonel bir futbol analisti ve bahis danışmanısın. Türkçe, özgüvenli yaz.
 
 MAÇ: {country} – {league} ({season})
-{home} vs {away} | Skor: {h_g}–{a_g} | Durum: {durum}
+EV SAHİBİ: {home} | DEPLASMAN: {away} | Anlık skor: {h_g}–{a_g} | Durum: {durum}
 FORM: {home}: {form_str(hf,hid)} | {away}: {form_str(af,aid)}
 SEZON: {season_str(hs,home)} / {season_str(as_,away)}
 {sb}
 {eb}
 
 ÇOK ÖNEMLİ:
-- Skor formatı HER ZAMAN Ev Sahibi - Deplasman olacak.
+- Yazacağın tüm skorlar HER ZAMAN Ev Sahibi - Deplasman sırasıyla olmalı.
 - İlk sayı {home}, ikinci sayı {away} içindir.
-- Deplasman favori olsa bile sıra değişmeyecek.
+- Deplasman favori olsa bile takım sırasını asla ters çevirme.
 
 GÖREVİN:
 1. 📊 MAÇ ANALİZİ – Hangi takım üstün, neden?
 2. 🔮 TAHMİN – Kesin final skoru. MUTLAKA yaz: "Tahmin edilen skor: X-Y"
 3. ⚡ KRİTİK FAKTÖR – Maçı belirleyecek tek unsur
 4. 💡 EK BİLGİ – Derbi, puan durumu, sakatlık, haber
-
 5. 🔮 1.YARI TAHMİNİ – İlk yarı skoru (örn: 1-0)
 
 Mutlaka skor verirken Ev Sahibi - Deplasman formatını koru.
@@ -645,21 +643,26 @@ def generic_prompt(sport_name,home,away,status,league):
 
     return f"""Sen profesyonel bir {sport_name} analisti ve bahis danışmanısın. Türkçe, özgüvenli yaz.
 
-MAÇ: {league} | {home} vs {away} | Durum: {status}
+MAÇ: {league} | EV SAHİBİ: {home} | DEPLASMAN: {away} | Durum: {status}
+
+ÇOK ÖNEMLİ:
+- Yazacağın tüm skorlar HER ZAMAN Ev Sahibi - Deplasman sırasıyla olmalı.
+- İlk sayı {home}, ikinci sayı {away} içindir.
+- Deplasman favori olsa bile takım sırasını asla ters çevirme.
 
 GÖREVİN:
 1. 📊 MAÇ ANALİZİ – Nasıl bir maç bekleniyor / gidiyor?
 2. 💡 EK BİLGİ – Bu takımlar hakkında önemli bilgi
 {detail}
 
+Mutlaka skor verirken Ev Sahibi - Deplasman formatını koru.
 5-7 cümle. Özgüvenli, kesin ve net yaz."""
 
 def bulk_prompt(matches_info,sport_name):
-    lines=[]
-    for i,m in enumerate(matches_info,1):
-        lines.append(f"{i}. {m['home']} vs {m['away']} | Lig: {m['league']} | Durum: {m['status']}")
-    fmt = "2-1" if sport_name=="Futbol" else ("98-105" if sport_name=="Basketbol" else ("2-1 set" if sport_name=="Tenis" else "3-1"))
-    NL = chr(10)
+    big=any(w in sport_name.lower() for w in ["basket","nba","hokey","hockey","voleybol"])
+    fmt="88-95" if big else "2-1"
+    NL="\n"
+    lines=[f"{i}. {m['home']} vs {m['away']} ({m['league']}) | {m['status']}" for i,m in enumerate(matches_info,1)]
     return f"""Sen profesyonel bir {sport_name} analisti ve bahis danışmanısın.
 Her maç için Türkçe kısa tahmin yaz.
 
@@ -784,11 +787,11 @@ def show_ai(text,err,p,model_name,sname=None,show_tokens=True):
         st.markdown(f'<div class="pred-box"><div class="pred-label">🔮 TAHMİN EDİLEN SKOR</div><div class="pred-score">{pred}</div><div class="pred-label">{p["home"]} – {p["away"]}</div>{sub_div}</div>', unsafe_allow_html=True)
     tokens=estimate_tokens(text)
     token_info=f' <span style="font-size:11px;opacity:.5">~{tokens} token</span>' if show_tokens else ""
-    st.markdown(f'<div class="ai-box">🤖 <b>{model_name}</b>{token_info}<br><br>{safe_text(text)}</div>',unsafe_allow_html=True)
+    st.markdown(f'<div class="ai-box">🤖 <b>{model_name}</b>{token_info}<br><br>{text}</div>',unsafe_allow_html=True)
     # Save to history
     import datetime as dt_module
     st.session_state.analysis_history.append({
-        "time": dt_now.now(TZ_TR).strftime("%H:%M"),
+        "time": dt_module.datetime.now(TZ_TR).strftime("%H:%M"),
         "sport": sname,
         "home": p["home"], "away": p["away"],
         "league": p.get("league",""),
@@ -800,7 +803,6 @@ def show_ai(text,err,p,model_name,sname=None,show_tokens=True):
     })
 
 def compare_all_models(prompt,p,_sport_name=""):
-    from datetime import datetime as dt_now
     """Tüm modelleri paralel çalıştır ve yan yana göster"""
     models=list(AI_MODELS.keys())
     results={}
@@ -814,7 +816,7 @@ def compare_all_models(prompt,p,_sport_name=""):
 
     # Tahminleri üstte özet göster
     st.markdown("### 🔮 Model Tahminleri")
-    pred_cols=mobile_columns(len(models))
+    pred_cols=st.columns(len(models))
     for i,(model_name,res) in enumerate(results.items()):
         with pred_cols[i]:
             pred=extract_pred(res["text"],_sport_name) if res["text"] else None
@@ -853,7 +855,7 @@ def compare_all_models(prompt,p,_sport_name=""):
     consensus = extract_consensus(results, _sport_name)
     if consensus:
         st.markdown("### 🤝 Ortak Tahminler")
-        cols = mobile_columns(len(consensus))
+        cols = st.columns(len(consensus))
         for i, (key, (label, detail)) in enumerate(consensus.items()):
             with cols[i]:
                 st.markdown(f'''<div style="background:var(--color-background-secondary);border-radius:10px;padding:10px;text-align:center">
@@ -878,7 +880,7 @@ def compare_all_models(prompt,p,_sport_name=""):
                 st.error(res["err"])
             elif res["text"]:
                 tokens=estimate_tokens(res["text"])
-                st.markdown(f'<div class="ai-box" style="border-color:{color}55">{safe_text(res["text"])}<br><span style="font-size:11px;opacity:.4">~{tokens} token</span></div>',unsafe_allow_html=True)
+                st.markdown(f'<div class="ai-box" style="border-color:{color}55">{res["text"]}<br><span style="font-size:11px;opacity:.4">~{tokens} token</span></div>',unsafe_allow_html=True)
             st.markdown("---")
     
     # Save to history (always)
@@ -887,7 +889,7 @@ def compare_all_models(prompt,p,_sport_name=""):
             pred=extract_pred(res["text"],_sport_name)
             tokens=estimate_tokens(res["text"])
             st.session_state.analysis_history.append({
-                "time": dt_now.now(TZ_TR).strftime("%H:%M"),
+                "time": dt_module.datetime.now(TZ_TR).strftime("%H:%M"),
                 "sport": _sport_name,
                 "home": p["home"], "away": p["away"],
                 "league": p.get("league",""),
@@ -904,7 +906,9 @@ with st.sidebar:
     st.markdown("---")
     if "sport_name" not in st.session_state:
         st.session_state.sport_name = list(SPORT_CONFIG.keys())[0]
-    sport_name = st.session_state.sport_name
+    sport_name = st.selectbox("Branş", list(SPORT_CONFIG.keys()), 
+                              index=list(SPORT_CONFIG.keys()).index(st.session_state.sport_name))
+    st.session_state.sport_name = sport_name
     cfg=SPORT_CONFIG[sport_name]
     sel_date=st.date_input("📅 Tarih",value=date.today())
     date_str=sel_date.strftime("%Y-%m-%d")
@@ -949,7 +953,7 @@ if _new_sport != sport_name:
     st.rerun()
 
 if not API_KEY or "buraya" in API_KEY:
-    st.error("⚠️ Streamlit Secrets içine `API_SPORTS_KEY` ekle."); st.stop()
+    st.error("⚠️ `.env` dosyasına `API_SPORTS_KEY` ekle."); st.stop()
 
 # Country filter (populated after data loads)
 country_filter_key = f"country_filter_{sport_name}"
@@ -1087,7 +1091,7 @@ En az 80 maç listele."""
             else: st.session_state.selected.discard(mid_fake)
 
             # Quick buttons compact
-            _fb1, _fb2, _fb3 = mobile_columns([2,2,1])
+            _fb1, _fb2, _fb3 = st.columns([2,2,1])
             with _fb1:
                 if st.button("🤖 Analiz", key=f"ai_{mid_fake}", use_container_width=True):
                     st.session_state[f"qr_{mid_fake}"] = "single"
@@ -1127,7 +1131,7 @@ En az 80 maç listele."""
                             if st.button(f"{a2} Analizi göster/gizle", key=f"det_gem_btn_{i}"):
                                 st.session_state[det_k] = not st.session_state[det_k]
                             if st.session_state[det_k]:
-                                st.markdown(f'<div class="ai-box">{safe_text(text)}</div>', unsafe_allow_html=True)
+                                st.markdown(f'<div class="ai-box">{text}</div>', unsafe_allow_html=True)
                         elif err: st.error(err)
                     else:
                         compare_all_models(prompt, p_fake, _sport_name=sport_name)
@@ -1205,7 +1209,7 @@ st.markdown(f'<div style="font-size:12px;opacity:.6;margin:4px 0 8px">🕐 {len(
 all_p=pre_all+live_parsed
 sel_count=len(st.session_state.selected)
 if sel_count:
-    bar_cols=mobile_columns([4,3,2])
+    bar_cols=st.columns([4,3,2])
     with bar_cols[0]:
         st.markdown(f'<span style="font-size:13px">☑️ {sel_count} seçili</span>', unsafe_allow_html=True)
     with bar_cols[1]:
@@ -1280,7 +1284,7 @@ def match_card(p,raw_list):
         st.markdown(f'<div class="bulk-result">{res}</div>',unsafe_allow_html=True)
 
     # Hızlı aksiyon butonları — 3 eşit sütun, mobilde yan yana
-    _qc1, _qc2, _qc3 = mobile_columns(3)
+    _qc1, _qc2, _qc3 = st.columns(3)
     with _qc1:
         if st.button("🤖 Analiz", key=f"quick_{mk}", use_container_width=True):
             st.session_state[f"quick_run_{mk}"] = "single"
@@ -1380,7 +1384,7 @@ def match_card(p,raw_list):
                                 st.info(f"🔄 **{t}'** {team} — çıkan: {pl} / giren: {ast}")
                     else: st.info("Henüz olay yok.")
             with t3:
-                btn1,btn2=mobile_columns(2)
+                btn1,btn2=st.columns(2)
                 with btn1: do_single=st.button("🤖 Seçili Model",key=f"ai_{mk}")
                 with btn2: do_compare=st.button("⚡ Tüm Modeller Karşılaştır",key=f"cmp_{mk}")
                 # Web search - her zaman görünür, Gemini bilgileri diğer modellere de aktarılır
@@ -1425,7 +1429,7 @@ def match_card(p,raw_list):
             t1,t2=st.tabs(["📋 Bilgi","🤖 AI Tahmini"])
             with t1:
                 raw=p.get("raw",{})
-                ca,cb=mobile_columns(2)
+                ca,cb=st.columns(2)
                 with ca:
                     st.markdown(f"**Lig:** {p['league']}")
                     st.markdown(f"**Durum:** {p['status_txt']}")
@@ -1443,7 +1447,7 @@ def match_card(p,raw_list):
                     st.markdown(f"**Dep:** {p['away']}")
                     st.markdown(f"**Skor:** {p['h_score']} – {p['a_score']}")
             with t2:
-                btn1,btn2=mobile_columns(2)
+                btn1,btn2=st.columns(2)
                 with btn1: do_single2=st.button("🤖 Seçili Model",key=f"ai_{mk}")
                 with btn2: do_compare2=st.button("⚡ Tüm Modeller",key=f"cmp_{mk}")
                 use_ws2 = st.checkbox("🌐 Gemini ile güncel haber çek (tüm modeller kullanır)", key=f"ws_{mk}", value=False)
@@ -1488,7 +1492,7 @@ with tab_pre:
 
 with tab_live:
     # Manuel tetikleme
-    col_btn,col_info=mobile_columns([2,5])
+    col_btn,col_info=st.columns([2,5])
     with col_btn:
         if st.button("🔴 Canlı Maçları Yükle / Yenile",type="primary",use_container_width=True):
             with st.spinner("Canlı maçlar çekiliyor..."):
@@ -1557,7 +1561,7 @@ with tab_hist:
         for key, items in reversed(list(groups.items())):
             h0 = items[0]
             # Header row
-            hc1,hc2 = mobile_columns([3,7])
+            hc1,hc2 = st.columns([3,7])
             with hc1:
                 st.markdown(f"**{h0['time']}** · {h0['sport']}")
                 st.caption(f"{h0['league']}")
@@ -1565,7 +1569,7 @@ with tab_hist:
                 st.markdown(f"### {h0['home']} – {h0['away']}")
 
             # Model predictions in one row
-            pred_cols = mobile_columns(len(items))
+            pred_cols = st.columns(len(items))
             for i, h in enumerate(items):
                 with pred_cols[i]:
                     color = MODEL_COLORS.get(h["model"],"#888")
@@ -1592,6 +1596,6 @@ with tab_hist:
                     color = MODEL_COLORS.get(h["model"],"#888")
                     short = MODEL_SHORT.get(h["model"], h["model"])
                     st.markdown(f"**{short}** · ~{h['tokens']} token")
-                    st.markdown(f'<div class="ai-box" style="border-color:{color}55;margin-bottom:8px">{safe_text(h["text"])}</div>', unsafe_allow_html=True)
+                    st.markdown(f'<div class="ai-box" style="border-color:{color}55;margin-bottom:8px">{h["text"]}</div>', unsafe_allow_html=True)
 
             st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
