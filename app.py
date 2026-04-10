@@ -75,7 +75,7 @@ WAIT_SH  = {"NS"}
 TZ_TR    = timezone(timedelta(hours=3))
 
 # ── SESSION STATE ─────────────────────────────────────────────────
-for k,v in [("bulk_results",{}),("selected",set()),("live_loaded",False),("live_data",[]),("live_ts",None),("analysis_history",[])]:
+for k,v in [("bulk_results",{}),("selected",set()),("live_loaded",False),("live_data",[]),("live_ts",None),("analysis_history",[]),("gemini_fallback",{})]:
     if k not in st.session_state:
         st.session_state[k] = v
 
@@ -813,27 +813,88 @@ with st.spinner("Maç öncesi liste yükleniyor..."):
 
 # Gemini fallback if no matches found
 if not pre_raw and GEMINI_KEY:
-    st.warning(f"⚠️ API'den {sport_name} maçı gelmedi (limit dolmuş olabilir). Gemini ile maç listesi çekebilirsiniz.")
-    if st.button(f"🌐 Gemini ile Bugünkü {sport_name} Maçlarını Çek", key="gemini_fallback"):
-        with st.spinner("Gemini maç listesi arıyor..."):
-            fallback_prompt = f"""{date_str} tarihindeki {sport_name} maçlarını listele. Tüm ligler dahil (majör ve minör).
-Her maç için: Lig adı | Ev takımı vs Deplasman takımı | Saat (varsa)
-Türkçe yaz. Sadece liste, yorum yok."""
-            fallback_text, fallback_err = call_gemini(fallback_prompt, use_search=True)
-        if fallback_text and not fallback_err:
-            st.info(f"🌐 **Gemini Maç Listesi:**\n\n{fallback_text}")
-            # AI tahmin butonu
-            if st.button("🤖 Bu Maçlar İçin Tahmin Al"):
-                tahmin_p = f"""Aşağıdaki {sport_name} maçları için kısa tahminler:
-{fallback_text}
+    cache_key = f"{sport_name}_{date_str}"
+    cached_matches = st.session_state.gemini_fallback.get(cache_key)
 
-Her maç için: 🏆 [Ev] vs [Dep] → Tahmin edilen skor: X-Y | [1 cümle gerekçe]"""
-                with st.spinner("Tahminler yapılıyor..."):
-                    text, err = run_ai(tahmin_p, ai_model)
-                    if text and not err:
-                        st.markdown(f'<div class="ai-box">{text}</div>', unsafe_allow_html=True)
-        elif fallback_err:
-            st.error(fallback_err)
+    if not cached_matches:
+        st.warning(f"⚠️ API'den {sport_name} maçı gelmedi. Gemini ile çekebilirsiniz.")
+        if st.button(f"🌐 Gemini ile Bugünkü {sport_name} Maçlarını Çek", key="gemini_fallback_btn"):
+            with st.spinner("Gemini maç listesi arıyor..."):
+                fallback_prompt = f"""{date_str} tarihindeki {sport_name} maçlarını JSON formatında listele.
+Mümkün olduğunca fazla maç dahil et — majör, minör, tüm ligler.
+Yanıt SADECE şu JSON formatında olsun, başka metin olmasın:
+[
+  {{"home": "Takım A", "away": "Takım B", "league": "Lig Adı", "country": "Ülke", "time": "20:00"}},
+  ...
+]"""
+                fallback_text, fallback_err = call_gemini(fallback_prompt, use_search=True)
+            if fallback_err:
+                st.error(fallback_err)
+            elif fallback_text:
+                import json
+                try:
+                    clean = fallback_text.strip().replace("```json","").replace("```","").strip()
+                    matches = json.loads(clean)
+                    st.session_state.gemini_fallback[cache_key] = matches
+                    st.rerun()
+                except:
+                    st.error("Liste parse edilemedi. Tekrar dene.")
+                    st.code(fallback_text[:500])
+    else:
+        st.info(f"🌐 Gemini ile çekildi — {len(cached_matches)} maç (cache'den)")
+        if st.button("🔄 Yenile", key="gemini_refresh"):
+            del st.session_state.gemini_fallback[cache_key]
+            st.rerun()
+
+        # Show as match cards
+        if search:
+            q = search.lower()
+            cached_matches = [m for m in cached_matches if q in (m.get("home","")+" "+m.get("away","")).lower()]
+
+        st.markdown(f"### {cfg['emoji']} Maçlar ({len(cached_matches)})")
+        for i, gm in enumerate(cached_matches):
+            mid_fake = f"gem_{i}"
+            home = gm.get("home","?"); away = gm.get("away","?")
+            league = gm.get("league",""); country = gm.get("country",""); kt = gm.get("time","")
+
+            chk_col, info_col, badge_col = st.columns([0.4,5,1.5])
+            with chk_col:
+                checked = st.checkbox("", key=f"chk_{mid_fake}", value=(mid_fake in st.session_state.selected), label_visibility="collapsed")
+                if checked: st.session_state.selected.add(mid_fake)
+                else: st.session_state.selected.discard(mid_fake)
+            with info_col:
+                st.caption(f"🏆 {country}  ·  {league}")
+            with badge_col:
+                if kt: st.markdown(f'<span class="status-upcoming">🕐 {kt}</span>', unsafe_allow_html=True)
+
+            c1,c2,c3 = st.columns([4,2,4])
+            with c1: st.markdown(f"<div class='team-name' style='text-align:right'>{home}</div>", unsafe_allow_html=True)
+            with c2: st.markdown(f"<div class='score-box'>– – –</div>", unsafe_allow_html=True)
+            with c3: st.markdown(f"<div class='team-name'>{away}</div>", unsafe_allow_html=True)
+
+            with st.expander("🤖 AI Tahmini"):
+                btn1, btn2 = st.columns(2)
+                with btn1: do_s = st.button("🤖 Seçili Model", key=f"ai_{mid_fake}")
+                with btn2: do_c = st.button("⚡ Tüm Modeller", key=f"cmp_{mid_fake}")
+                use_ws_gem = st.checkbox("🌐 Gemini web araması", key=f"ws_{mid_fake}", value=False)
+
+                if do_s or do_c:
+                    p_fake = {"home":home,"away":away,"league":league,"mid":mid_fake,"sh":"NS"}
+                    prompt = generic_prompt(sport_name, home, away, "Başlamadı", league)
+                    if use_ws_gem and GEMINI_KEY:
+                        with st.spinner("🌐 Gemini haber arıyor..."):
+                            news_t, _ = call_gemini(f"{home} vs {away} maçı hakkında güncel bilgi, sakat oyuncular. Türkçe 3 madde.", use_search=True)
+                        if news_t:
+                            st.info(f"🌐 {news_t}")
+                            prompt = prompt + f"\n\nGÜNCEL:\n{news_t}"
+                    if do_s:
+                        with st.spinner("Analiz yapılıyor..."):
+                            text, err = run_ai(prompt, ai_model)
+                        show_ai(text, err, p_fake, ai_model, sname=sport_name)
+                    else:
+                        compare_all_models(prompt, p_fake, _sport_name=sport_name)
+
+            st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
 
 if cache_ts:
     st.markdown(f'<span class="cache-info">📦 Maç öncesi liste bugün {cache_ts}\'de çekildi — gün boyunca sabit kalır</span>', unsafe_allow_html=True)
