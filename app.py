@@ -199,9 +199,9 @@ def call_gemini(prompt, use_search=False):
             search_tool = types.Tool(google_search=types.GoogleSearch())
             config = types.GenerateContentConfig(tools=[search_tool])
             r = client.models.generate_content(
-                model="gemini-2.0-flash", contents=prompt, config=config)
+                model="gemini-2.0-flash-lite", contents=prompt, config=config)
         else:
-            r = client.models.generate_content(model="gemini-2.0-flash", contents=prompt)
+            r = client.models.generate_content(model="gemini-2.0-flash-lite", contents=prompt)
         return r.text, None
     except Exception as e:
         err=str(e)
