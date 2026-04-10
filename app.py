@@ -296,26 +296,101 @@ def extract_pred(text, sport):
     return None
 
 def extract_sub_pred(text, sport):
-    """Extract quarter/half/set predictions from text."""
+    """Extract half-time prediction for football/basketball/handball only."""
     if not text: return {}
     sl = sport.lower()
+    # Voleybol ve diğerleri için sub pred yok
+    if any(w in sl for w in ["voleybol","formula","mma","rugby"]): return {}
     result = {}
     lines = text.split("\n")
+    is_big = any(w in sl for w in ["basket","nba","hokey","hockey"])
     for line in lines:
         ll = line.lower()
-        if "1.çeyrek" in ll or "ilk çeyrek" in ll or "q1" in ll:
-            m = re.search(r'(\d{2,3})\s*[-–]\s*(\d{2,3})', line)
-            if m: result["1.Çeyrek"] = f"{m.group(1)}–{m.group(2)}"
-        elif "1.yarı" in ll or "ilk yarı" in ll or "devre" in ll:
-            m = re.search(r'(\d{1,2})\s*[-–]\s*(\d{1,2})', line)
-            if m: result["1.Yarı"] = f"{m.group(1)}–{m.group(2)}"
-        elif "ilk set" in ll or "1.set" in ll or "set skoru" in ll:
-            m = re.search(r'(\d{2})\s*[-–]\s*(\d{2})', line)
-            if m: result["1.Set"] = f"{m.group(1)}–{m.group(2)}"
-        elif "1.periyot" in ll or "ilk periyot" in ll:
-            m = re.search(r'(\d{1,2})\s*[-–]\s*(\d{1,2})', line)
-            if m: result["1.Periyot"] = f"{m.group(1)}–{m.group(2)}"
+        if is_big:
+            # Basketbol/Hokey: 1.Yarı
+            if any(w in ll for w in ["1.yarı","ilk yarı","yarı skor","halftime"]):
+                m = re.search(r'(\d{2,3})\s*[-–]\s*(\d{2,3})', line)
+                if m: result["1.Yarı"] = f"{m.group(1)}–{m.group(2)}"
+        else:
+            # Futbol/Hentbol: 1.Yarı
+            if any(w in ll for w in ["1.yarı","ilk yarı","devre arası","halftime"]):
+                m = re.search(r'(\d{1,2})\s*[-–]\s*(\d{1,2})', line)
+                if m:
+                    a,b = int(m.group(1)), int(m.group(2))
+                    if a <= 10 and b <= 10:
+                        result["1.Yarı"] = f"{m.group(1)}–{m.group(2)}"
     return result
+
+def extract_consensus(results_dict, sport):
+    """4 modelin tahminlerinden ortak paydaları çıkar."""
+    sl = sport.lower()
+    is_football = "futbol" in sl
+    is_big = any(w in sl for w in ["basket","nba","hokey","hockey"])
+    
+    preds = []
+    for model_name, res in results_dict.items():
+        if res.get("text") and not res.get("err"):
+            p = extract_pred(res["text"], sport)
+            if p:
+                try:
+                    parts = re.split(r'[-–]', p)
+                    if len(parts)==2:
+                        preds.append((int(parts[0].strip()), int(parts[1].strip()), model_name, res["text"]))
+                except: pass
+    
+    if len(preds) < 2: return None
+    
+    consensus = {}
+    scores_h = [p[0] for p in preds]
+    scores_a = [p[1] for p in preds]
+    totals = [p[0]+p[1] for p in preds]
+    
+    # Kazanan konsensüsü
+    winners = []
+    for h,a,_,_ in preds:
+        if h > a: winners.append("ev")
+        elif a > h: winners.append("dep")
+        else: winners.append("beraberlik")
+    
+    from collections import Counter
+    w_count = Counter(winners)
+    top_winner = w_count.most_common(1)[0]
+    w_names = {"ev": preds[0][2] if preds else "Ev", "dep": "Deplasman", "beraberlik": "Beraberlik"}
+    
+    if top_winner[1] >= 3:  # 3+ model aynı fikirde
+        consensus["kazanan"] = ("✅ Güçlü konsensüs", f"{'Ev' if top_winner[0]=='ev' else 'Deplasman' if top_winner[0]=='dep' else 'Beraberlik'} kazanır ({top_winner[1]}/4 model)")
+    elif top_winner[1] == 2:
+        consensus["kazanan"] = ("⚡ Hafif üstünlük", f"{'Ev' if top_winner[0]=='ev' else 'Deplasman' if top_winner[0]=='dep' else 'Beraberlik'} lehine (2/4 model)")
+    
+    # Toplam gol/skor üst-alt
+    avg_total = sum(totals) / len(totals)
+    if is_football:
+        line = 2.5
+        over = sum(1 for t in totals if t > line)
+        if over >= 3:
+            consensus["üst/alt"] = ("📈 Üst", f"2.5 Üst ({over}/4 model, ort: {avg_total:.1f} gol)")
+        elif over <= 1:
+            consensus["üst/alt"] = ("📉 Alt", f"2.5 Alt ({4-over}/4 model, ort: {avg_total:.1f} gol)")
+        
+        # KG var/yok tahmini - text analizi
+        kg_var = sum(1 for _,_,_,txt in preds if any(w in txt.lower() for w in ["kg var","karşılıklı gol","her iki takım da"]))
+        if kg_var >= 3:
+            consensus["kg"] = ("⚽ KG Var", f"Her iki takım da gol atar ({kg_var}/4 model)")
+        elif kg_var <= 1:
+            consensus["kg"] = ("🔒 KG Yok", f"Tek taraflı gol bekleniyor")
+    
+    elif is_big:
+        avg_h = sum(scores_h)/len(scores_h)
+        avg_a = sum(scores_a)/len(scores_a)
+        consensus["skor_ort"] = ("📊 Ortalama", f"Ev {avg_h:.0f} – Dep {avg_a:.0f} (ort tahmin)")
+        # Handikap
+        spreads = [h-a for h,a,_,_ in preds]
+        avg_spread = sum(spreads)/len(spreads)
+        if abs(avg_spread) >= 8:
+            favori = "Ev" if avg_spread > 0 else "Deplasman"
+            consensus["handikap"] = ("🎯 Handikap", f"{favori} -7.5 handikap kazanır (ort fark: {abs(avg_spread):.0f})")
+    
+    return consensus if consensus else None
 
 # ── PROMPTS ───────────────────────────────────────────────────────
 def form_str(fxs,tid):
@@ -604,36 +679,61 @@ def compare_all_models(prompt,p,_sport_name=""):
     for i,(model_name,res) in enumerate(results.items()):
         with pred_cols[i]:
             pred=extract_pred(res["text"],_sport_name) if res["text"] else None
+            sub=extract_sub_pred(res["text"],_sport_name) if res["text"] else {}
             color={"groq":"#EF9F27","gemini":"#22c55e","gpt":"#378ADD","deepseek":"#E24B4A"}.get(AI_MODELS[model_name]["id"],"#888")
+            short_name=" ".join(model_name.split()[:2])
+            sub_html=""
+            if sub:
+                sub_html="".join([f'<div style="font-size:11px;color:{color};opacity:.8;margin-top:2px">{k}: <b>{v}</b></div>' for k,v in sub.items() if k and v])
             if pred:
                 st.markdown(f"""<div style="border:2px solid {color};border-radius:10px;padding:10px;text-align:center;margin-bottom:8px">
-                    <div style="font-size:10px;opacity:.7">{model_name.split()[0]} {model_name.split()[1] if len(model_name.split())>1 else ""}</div>
+                    <div style="font-size:10px;opacity:.6;margin-bottom:2px">{short_name}</div>
                     <div style="font-size:24px;font-weight:900;color:{color}">{pred}</div>
+                    {sub_html}
                 </div>""",unsafe_allow_html=True)
             elif res["err"]:
                 st.markdown(f"""<div style="border:1px solid #888;border-radius:10px;padding:10px;text-align:center">
-                    <div style="font-size:10px;opacity:.7">{model_name.split()[0]}</div>
+                    <div style="font-size:10px;opacity:.6">{short_name}</div>
                     <div style="font-size:11px;color:#888">Key yok</div>
                 </div>""",unsafe_allow_html=True)
             else:
                 st.markdown(f"""<div style="border:1px solid {color};border-radius:10px;padding:10px;text-align:center">
-                    <div style="font-size:10px;opacity:.7">{model_name.split()[0]}</div>
+                    <div style="font-size:10px;opacity:.6">{short_name}</div>
                     <div style="font-size:18px;font-weight:700;color:{color}">?</div>
                 </div>""",unsafe_allow_html=True)
 
-    # Detaylı analizler - doğrudan göster
-    st.markdown("### 📋 Detaylı Analizler")
+    # Konsensüs özeti
+    consensus = extract_consensus(results, _sport_name)
+    if consensus:
+        st.markdown("### 🤝 Ortak Tahminler")
+        cols = st.columns(len(consensus))
+        for i, (key, (label, detail)) in enumerate(consensus.items()):
+            with cols[i]:
+                st.markdown(f'''<div style="background:var(--color-background-secondary);border-radius:10px;padding:10px;text-align:center">
+                    <div style="font-size:13px;font-weight:500">{label}</div>
+                    <div style="font-size:11px;opacity:.7;margin-top:4px">{detail}</div>
+                </div>''', unsafe_allow_html=True)
+
+    # Detaylı analizler - checkbox ile göster/gizle
     import datetime as dt_module
+    show_details = st.checkbox("📋 Detaylı analizleri göster", key=f"det_{p['mid']}", value=False)
+    if show_details:
+        st.markdown("### 📋 Detaylı Analizler")
+        for model_name,res in results.items():
+            color={"groq":"#EF9F27","gemini":"#22c55e","gpt":"#378ADD","deepseek":"#E24B4A"}.get(AI_MODELS[model_name]["id"],"#888")
+            st.markdown(f"**{model_name}**")
+            if res["err"]: 
+                st.error(res["err"])
+            elif res["text"]:
+                tokens=estimate_tokens(res["text"])
+                st.markdown(f'<div class="ai-box" style="border-color:{color}55">{res["text"]}<br><span style="font-size:11px;opacity:.4">~{tokens} token</span></div>',unsafe_allow_html=True)
+            st.markdown("---")
+    
+    # Save to history (always)
     for model_name,res in results.items():
-        color={"groq":"#EF9F27","gemini":"#22c55e","gpt":"#378ADD","deepseek":"#E24B4A"}.get(AI_MODELS[model_name]["id"],"#888")
-        st.markdown(f"**{model_name}**")
-        if res["err"]: 
-            st.error(res["err"])
-        elif res["text"]:
-            tokens=estimate_tokens(res["text"])
+        if res.get("text") and not res.get("err"):
             pred=extract_pred(res["text"],_sport_name)
-            st.markdown(f'<div class="ai-box" style="border-color:{color}55">{res["text"]}<br><span style="font-size:11px;opacity:.4">~{tokens} token</span></div>',unsafe_allow_html=True)
-            # Save to history
+            tokens=estimate_tokens(res["text"])
             st.session_state.analysis_history.append({
                 "time": dt_module.datetime.now(TZ_TR).strftime("%H:%M"),
                 "sport": _sport_name,
@@ -645,7 +745,6 @@ def compare_all_models(prompt,p,_sport_name=""):
                 "tokens": tokens,
                 "sub_pred": extract_sub_pred(res["text"],_sport_name)
             })
-        st.markdown("---")
 
 # ── SIDEBAR ───────────────────────────────────────────────────────
 with st.sidebar:
@@ -896,10 +995,11 @@ def match_card(p,raw_list):
 
 # ── SEKMELER ─────────────────────────────────────────────────────
 hist_count = len(st.session_state.analysis_history)
-tab_pre,tab_live,tab_hist=st.tabs([
+tab_pre,tab_live,tab_hist,tab_tennis=st.tabs([
     f"🕐 Maç Öncesi ({len(pre_all)})",
     f"🔴 Canlı & Bitti ({len(live_parsed)})",
-    f"📊 Tahmin Geçmişi ({hist_count})"
+    f"📊 Tahmin Geçmişi ({hist_count})",
+    "🎾 Tenis"
 ])
 
 with tab_pre:
@@ -949,6 +1049,52 @@ with tab_live:
         if lmin:
             st.markdown(f"### 📋 Diğer Ligler ({len(lmin)})")
             for p in lmin: match_card(p,st.session_state.live_data)
+
+with tab_tennis:
+    st.markdown("### 🎾 Tenis Maçları")
+    st.caption("Tenis verisi API-Sports ücretsiz planda kısıtlı — Gemini web aramasıyla güncel maç listesi çekiyoruz.")
+    
+    tennis_date = sel_date.strftime("%d %B %Y")
+    if st.button("🌐 Bugünkü Tenis Maçlarını Gemini ile Çek", type="primary"):
+        if not GEMINI_KEY:
+            st.error("Gemini key gerekli!")
+        else:
+            with st.spinner("Gemini tenis maçlarını arıyor..."):
+                tennis_prompt = f"""{tennis_date} tarihindeki ATP, WTA ve Grand Slam tenis maçlarını listele.
+Her maç için:
+- Turnuva adı
+- Oyuncu 1 vs Oyuncu 2
+- Tur (1. tur, çeyrek final vb.)
+- Favori oyuncu ve kısa gerekçe
+
+Türkçe yaz. Bilgi yoksa "bugün önemli maç yok" de."""
+                tennis_text, tennis_err = call_gemini(tennis_prompt, use_search=True)
+            
+            if tennis_err:
+                st.error(tennis_err)
+            elif tennis_text:
+                st.markdown(tennis_text)
+                
+                # AI tahmin butonu
+                if st.button("🤖 Tüm Maçlar İçin AI Tahmini Al"):
+                    tahmin_prompt = f"""Aşağıdaki tenis maçları için kısa tahminler yap:
+
+{tennis_text}
+
+Her maç için:
+🎾 [Oyuncu 1] vs [Oyuncu 2]
+🏆 Kazanan: [isim] ([2-0 / 2-1 / set skoru tahmini])
+⚡ Gerekçe: [1 cümle]
+---"""
+                    with st.spinner("AI tahminler yapıyor..."):
+                        for model_name in AI_MODELS:
+                            text, err = run_ai(tahmin_prompt, model_name)
+                            if text and not err:
+                                color={"groq":"#EF9F27","gemini":"#22c55e","gpt":"#378ADD","deepseek":"#E24B4A"}.get(AI_MODELS[model_name]["id"],"#888")
+                                st.markdown(f"**{model_name}**")
+                                st.markdown(f'<div class="ai-box" style="border-color:{color}55">{text}</div>', unsafe_allow_html=True)
+    else:
+        st.info("👆 Butona bas — Gemini bugünkü tenis maçlarını internetten çeker.")
 
 with tab_hist:
     hist = st.session_state.analysis_history
