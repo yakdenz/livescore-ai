@@ -216,24 +216,19 @@ def call_gemini(prompt, use_search=False):
     if not GEMINI_KEY: return None,"⚠️ Gemini key bulunamadı (.env → GEMINI_API_KEY)"
     try:
         from google import genai
-        from google.genai import types
         client = genai.Client(api_key=GEMINI_KEY)
         if use_search:
             try:
+                from google.genai import types
                 search_tool = types.Tool(google_search=types.GoogleSearch())
                 config = types.GenerateContentConfig(tools=[search_tool])
                 r = client.models.generate_content(
                     model="gemini-2.5-flash", contents=prompt, config=config)
-                text = r.text if r and hasattr(r,"text") else ""
-                return text, None
+                return r.text, None
             except Exception as _se:
-                if "SessionInfo" in str(_se) or "Bad message" in str(_se):
-                    # Retry without search
-                    try:
-                        r = client.models.generate_content(model="gemini-2.5-flash", contents=prompt)
-                        return r.text, None
-                    except: pass
-                return None, f"Gemini search hatası: {str(_se)[:100]}"
+                # Any error with search → fallback to plain
+                r = client.models.generate_content(model="gemini-2.5-flash", contents=prompt)
+                return r.text, None
         else:
             r = client.models.generate_content(model="gemini-2.5-flash", contents=prompt)
             return r.text, None
@@ -843,36 +838,13 @@ with st.sidebar:
 
 # ── BRANŞ SEÇİCİ ─────────────────────────────────────────────────
 sport_list = list(SPORT_CONFIG.keys())
-sport_short = []
-for s in sport_list:
-    words = s.split()
-    short = words[-1] if len(words) > 1 else s
-    sport_short.append(short)
-
-# Selectbox hidden, pills trigger rerun via query params workaround
-# Use simple selectbox but style it as pills with st.columns workaround
-# Best approach: use streamlit's built-in but trigger via buttons in a flex container
 _sel_idx = sport_list.index(sport_name) if sport_name in sport_list else 0
-
-# Render as inline buttons using markdown + hidden selectbox trick
-pills_html = '<div style="display:flex;flex-wrap:nowrap;overflow-x:auto;gap:6px;padding:4px 0 8px 0;scrollbar-width:none;-ms-overflow-style:none">'
-for _s, _short in zip(sport_list, sport_short):
-    _cfg = SPORT_CONFIG[_s]
-    if _s == sport_name:
-        pills_html += f'<span style="background:#378ADD;color:white;border-radius:20px;padding:5px 12px;font-size:13px;white-space:nowrap;flex-shrink:0">{_cfg["emoji"]} {_short}</span>'
-    else:
-        pills_html += f'<span style="background:var(--color-background-secondary);border:1px solid var(--color-border-tertiary);border-radius:20px;padding:5px 12px;font-size:13px;white-space:nowrap;flex-shrink:0;color:var(--color-text-secondary)">{_cfg["emoji"]} {_short}</span>'
-pills_html += '</div>'
-st.markdown(pills_html, unsafe_allow_html=True)
-
-# Actual selector (hidden label)
-_new_sport = st.selectbox("Branş seç", sport_list, index=_sel_idx,
+_new_sport = st.selectbox("Branş", sport_list, index=_sel_idx,
                           format_func=lambda s: f"{SPORT_CONFIG[s]['emoji']} {s.split()[-1]}",
                           label_visibility="collapsed", key="sport_sel_main")
 if _new_sport != sport_name:
     st.session_state.sport_name = _new_sport
     st.rerun()
-
 st.caption(f"{sel_date.strftime('%d %B %Y')} · {ai_model.split()[1] if len(ai_model.split())>1 else ai_model.split()[0]}")
 
 if not API_KEY or "buraya" in API_KEY:
@@ -1199,8 +1171,8 @@ def match_card(p,raw_list):
             </div>""",unsafe_allow_html=True)
         st.markdown(f'<div class="bulk-result">{res}</div>',unsafe_allow_html=True)
 
-    # Quick action buttons - compact inline
-    _qc = st.columns([2,2,1])
+    # Quick action buttons
+    _qc = st.columns(3)
     with _qc[0]:
         if st.button("🤖 Analiz", key=f"quick_{mk}", use_container_width=True):
             st.session_state[f"quick_run_{mk}"] = "single"
@@ -1208,7 +1180,7 @@ def match_card(p,raw_list):
         if st.button("⚡ 4 Model", key=f"quickcmp_{mk}", use_container_width=True):
             st.session_state[f"quick_run_{mk}"] = "compare"
     with _qc[2]:
-        if st.button("🌐", key=f"quickws_{mk}", use_container_width=True):
+        if st.button("🌐+⚡", key=f"quickws_{mk}", use_container_width=True):
             st.session_state[f"quick_run_{mk}"] = "web_compare"
 
     # Show stored quick analysis results
