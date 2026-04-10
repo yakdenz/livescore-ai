@@ -830,11 +830,39 @@ with st.sidebar:
         st.rerun()
     st.caption("API-Sports ücretsiz\n100 istek/gün/branş")
 
-# ── HEADER ───────────────────────────────────────────────────────
-st.markdown(f'<p style="font-size:16px;font-weight:600;margin:4px 0">{cfg["emoji"]} {sport_name} &nbsp;<span style="font-size:12px;opacity:.6;font-weight:400">{sel_date.strftime("%d %b")} · {ai_model.split()[1] if len(ai_model.split())>1 else ai_model.split()[0]}</span></p>', unsafe_allow_html=True)
+# ── HEADER + HORIZONTAL SPORT SELECTOR ──────────────────────────
+# Horizontal sport tabs
+sport_list = list(SPORT_CONFIG.keys())
+sport_emojis = [SPORT_CONFIG[s]["emoji"] for s in sport_list]
+
+# Use st.columns for sport selector
+sport_cols = st.columns(len(sport_list))
+new_sport = sport_name
+for i, sn in enumerate(sport_list):
+    with sport_cols[i]:
+        scfg = SPORT_CONFIG[sn]
+        active_style = "color:#378ADD;font-weight:700;" if sn==sport_name else "opacity:.6;"
+        if st.button(scfg["emoji"], key=f"sport_btn_{sn}", help=sn, use_container_width=True):
+            new_sport = sn
+
+if new_sport != sport_name:
+    st.session_state["_sport"] = new_sport
+    st.rerun()
+
+# Apply sport from session if changed
+if "_sport" in st.session_state:
+    sport_name = st.session_state.pop("_sport")
+    cfg = SPORT_CONFIG[sport_name]
+
+st.markdown(f'<p style="font-size:15px;font-weight:600;margin:2px 0 6px">{cfg["emoji"]} {sport_name} <span style="font-size:11px;opacity:.5;font-weight:400">{sel_date.strftime("%d %b")} · {ai_model.split()[1] if len(ai_model.split())>1 else ai_model.split()[0]}</span></p>', unsafe_allow_html=True)
 
 if not API_KEY or "buraya" in API_KEY:
     st.error("⚠️ `.env` dosyasına `API_SPORTS_KEY` ekle."); st.stop()
+
+# Country filter (populated after data loads)
+country_filter_key = f"country_filter_{sport_name}"
+if country_filter_key not in st.session_state:
+    st.session_state[country_filter_key] = "Hepsi"
 
 # ── VERİ: MAÇ ÖNCESİ (günlük cache) ─────────────────────────────
 with st.spinner("Maç öncesi liste yükleniyor..."):
@@ -849,7 +877,20 @@ if not pre_raw and GEMINI_KEY:
         st.warning(f"⚠️ API'den {sport_name} maçı gelmedi. Gemini ile çekebilirsiniz.")
         if st.button(f"🌐 Gemini ile Bugünkü {sport_name} Maçlarını Çek", key="gemini_fallback_btn"):
             with st.spinner("Gemini maç listesi arıyor..."):
-                fallback_prompt = f"""{date_str} tarihindeki TÜM {sport_name} maçlarını JSON formatında listele.
+                # Build sport-specific prompt
+                is_tennis_fb = "tenis" in sport_name.lower() or "tennis" in sport_name.lower()
+                if is_tennis_fb:
+                    fallback_prompt = f"""{date_str} tarihindeki TÜM tenis maçlarını JSON formatında listele.
+ATP, WTA, ITF, Challenger, Grand Slam tüm turnuvalar dahil.
+Her oyuncu için tam isim yaz.
+Yanıt SADECE JSON array, başka metin YOK:
+[
+  {{"home": "Oyuncu A", "away": "Oyuncu B", "league": "ATP Monte-Carlo", "country": "Monako", "time": "14:00"}},
+  ...
+]
+En az 50 maç listele."""
+                else:
+                    fallback_prompt = f"""{date_str} tarihindeki TÜM {sport_name} maçlarını JSON formatında listele.
 MUTLAKA şu ligleri dahil et (eksiksiz):
 - Türkiye: Süper Lig, 1.Lig, 2.Lig
 - İngiltere: Premier League, Championship, League One
@@ -1008,6 +1049,32 @@ if search:
     q=search.lower()
     pre_all=[p for p in pre_all if q in (p["home"]+" "+p["away"]).lower()]
 
+# Country filter
+all_countries = sorted(set(p.get("country","") for p in pre_all if p.get("country","")))
+if all_countries:
+    major_countries = ["Türkiye","England","Spain","Italy","Germany","France","Netherlands","Portugal","Belgium","Scotland","Greece","UEFA"]
+    ordered = ["Hepsi"] + [c for c in major_countries if c in all_countries] + [c for c in all_countries if c not in major_countries and c not in ["Hepsi"]]
+    
+    # Horizontal scrollable country filter
+    country_icons = {"Türkiye":"🇹🇷","England":"🏴󠁧󠁢󠁥󠁮󠁧󠁿","Spain":"🇪🇸","Italy":"🇮🇹","Germany":"🇩🇪","France":"🇫🇷",
+                     "Netherlands":"🇳🇱","Portugal":"🇵🇹","Belgium":"🇧🇪","Scotland":"🏴󠁧󠁢󠁳󠁣󠁴󠁿","Greece":"🇬🇷","UEFA":"🇪🇺",
+                     "USA":"🇺🇸","Brazil":"🇧🇷","Argentina":"🇦🇷","Russia":"🇷🇺","Ukraine":"🇺🇦","Poland":"🇵🇱",
+                     "Czech Republic":"🇨🇿","Sweden":"🇸🇪","Norway":"🇳🇴","Denmark":"🇩🇰","Switzerland":"🇨🇭"}
+    
+    sel_country = st.session_state.get(country_filter_key, "Hepsi")
+    # Show as radio but compact
+    country_disp = [f"{country_icons.get(c,'🌍')} {c}" if c!="Hepsi" else "🌍 Hepsi" for c in ordered[:10]]
+    sel_idx = ordered[:10].index(sel_country) if sel_country in ordered[:10] else 0
+    new_country = st.radio("", ordered[:10], index=sel_idx, horizontal=True, 
+                           format_func=lambda c: f"{country_icons.get(c,'🌍')} {c}" if c!="Hepsi" else "🌍 Hepsi",
+                           key=f"cradio_{sport_name}", label_visibility="collapsed")
+    if new_country != sel_country:
+        st.session_state[country_filter_key] = new_country
+        st.rerun()
+    
+    if sel_country != "Hepsi":
+        pre_all = [p for p in pre_all if p.get("country","") == sel_country]
+
 pre_major=[p for p in pre_all if p["is_major"]]
 pre_minor=[p for p in pre_all if not p["is_major"]]
 
@@ -1093,16 +1160,16 @@ def match_card(p,raw_list):
             </div>""",unsafe_allow_html=True)
         st.markdown(f'<div class="bulk-result">{res}</div>',unsafe_allow_html=True)
 
-    # Quick action buttons outside expander
-    qa1, qa2, qa3 = st.columns([1,1,1])
-    with qa1:
+    # Quick action buttons
+    _b1, _b2, _b3 = st.columns(3)
+    with _b1:
         if st.button("🤖 Analiz", key=f"quick_{mk}", use_container_width=True):
             st.session_state[f"quick_run_{mk}"] = "single"
-    with qa2:
-        if st.button("⚡ Karşılaştır", key=f"quickcmp_{mk}", use_container_width=True):
+    with _b2:
+        if st.button("⚡ 4 Model", key=f"quickcmp_{mk}", use_container_width=True):
             st.session_state[f"quick_run_{mk}"] = "compare"
-    with qa3:
-        if st.button("🌐+⚡", key=f"quickws_{mk}", use_container_width=True):
+    with _b3:
+        if st.button("🌐⚡", key=f"quickws_{mk}", use_container_width=True):
             st.session_state[f"quick_run_{mk}"] = "web_compare"
 
     # Run quick analysis if triggered
