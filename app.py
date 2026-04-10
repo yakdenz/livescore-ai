@@ -62,11 +62,11 @@ SPORT_CONFIG = {
     "⚽ Futbol":     {"key":"football",  "base":"https://v3.football.api-sports.io",  "emoji":"⚽"},
     "🏀 Basketbol":  {"key":"basketball","base":"https://v1.basketball.api-sports.io","emoji":"🏀"},
     "🎾 Tenis":      {"key":"tennis",    "base":"https://v1.tennis.api-sports.io",    "emoji":"🎾"},
-    "🏒 Hokey":      {"key":"hockey",    "base":"https://v1.hockey.api-sports.io",    "emoji":"🏒"},
-    "🤼 MMA":        {"key":"mma",       "base":"https://v1.mma.api-sports.io",       "emoji":"🤼"},
-    "🏉 Rugby":      {"key":"rugby",     "base":"https://v1.rugby.api-sports.io",     "emoji":"🏉"},
     "🏐 Voleybol":   {"key":"volleyball","base":"https://v1.volleyball.api-sports.io","emoji":"🏐"},
+    "🏒 Hokey":      {"key":"hockey",    "base":"https://v1.hockey.api-sports.io",    "emoji":"🏒"},
     "🤾 Hentbol":    {"key":"handball",  "base":"https://v1.handball.api-sports.io",  "emoji":"🤾"},
+    "🏉 Rugby":      {"key":"rugby",     "base":"https://v1.rugby.api-sports.io",     "emoji":"🏉"},
+    "🤼 MMA":        {"key":"mma",       "base":"https://v1.mma.api-sports.io",       "emoji":"🤼"},
     "🏎️ Formula 1": {"key":"formula-1", "base":"https://v1.formula-1.api-sports.io", "emoji":"🏎️"},
 }
 
@@ -971,7 +971,29 @@ En az 80 maç listele."""
             cached_matches = [m for m in cached_matches if q in (m.get("home","")+" "+m.get("away","")).lower()]
 
         st.markdown(f'<div style="font-size:12px;opacity:.5;margin:4px 0">{cfg["emoji"]} {len(cached_matches)} maç</div>', unsafe_allow_html=True)
-        for i, gm in enumerate(cached_matches):
+        
+        # Group by league
+        from collections import defaultdict as _dd
+        _league_groups = _dd(list)
+        for _gm in cached_matches:
+            _league_groups[_gm.get("league","Diğer")].append(_gm)
+        
+        # Sort: major leagues first
+        _major = ["Süper Lig","Premier League","La Liga","Serie A","Bundesliga","Ligue 1",
+                  "Champions League","Europa League","Conference League","NBA","Euroleague",
+                  "ATP","WTA","Grand Slam"]
+        def _league_sort(l):
+            for i,m in enumerate(_major):
+                if m.lower() in l.lower(): return i
+            return 99
+        _sorted_leagues = sorted(_league_groups.keys(), key=_league_sort)
+        
+        _flat_matches = []
+        for _lg in _sorted_leagues:
+            _flat_matches.extend(_league_groups[_lg])
+        
+        i = 0
+        for i, gm in enumerate(_flat_matches):
             mid_fake = f"gem_{i}"
             home = gm.get("home","?"); away = gm.get("away","?")
             league = gm.get("league",""); country = gm.get("country",""); kt = gm.get("time","")
@@ -991,16 +1013,16 @@ En az 80 maç listele."""
             if checked: st.session_state.selected.add(mid_fake)
             else: st.session_state.selected.discard(mid_fake)
 
-            # Quick buttons (same as real match cards)
-            qb1, qb2, qb3 = st.columns(3)
-            with qb1:
+            # Quick buttons compact
+            _fb1, _fb2, _fb3 = st.columns([2,2,1])
+            with _fb1:
                 if st.button("🤖 Analiz", key=f"ai_{mid_fake}", use_container_width=True):
                     st.session_state[f"qr_{mid_fake}"] = "single"
-            with qb2:
-                if st.button("⚡ Karşılaştır", key=f"cmp_{mid_fake}", use_container_width=True):
+            with _fb2:
+                if st.button("⚡ 4 Model", key=f"cmp_{mid_fake}", use_container_width=True):
                     st.session_state[f"qr_{mid_fake}"] = "compare"
-            with qb3:
-                if st.button("🌐+⚡", key=f"ws_{mid_fake}", use_container_width=True):
+            with _fb3:
+                if st.button("🌐", key=f"ws_{mid_fake}", use_container_width=True):
                     st.session_state[f"qr_{mid_fake}"] = "web_compare"
 
             if st.session_state.get(f"qr_{mid_fake}"):
@@ -1034,6 +1056,7 @@ En az 80 maç listele."""
                         compare_all_models(prompt, p_fake, _sport_name=sport_name)
 
             st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
+        i += 1
 
 if cache_ts:
     st.markdown(f'<span class="cache-info">📦 Maç öncesi liste bugün {cache_ts}\'de çekildi — gün boyunca sabit kalır</span>', unsafe_allow_html=True)
@@ -1081,28 +1104,13 @@ if all_countries:
                      "Czech Republic":"🇨🇿","Sweden":"🇸🇪","Norway":"🇳🇴","Denmark":"🇩🇰","Switzerland":"🇨🇭"}
     
     sel_country = st.session_state.get(country_filter_key, "Hepsi")
-    shown = ordered[:15]
-    
-    # Scrollable pills for countries
-    c_pills = '<div style="display:flex;flex-wrap:nowrap;overflow-x:auto;gap:4px;padding:2px 0 6px 0;scrollbar-width:none">'
-    for _c in shown:
-        _icon = country_icons.get(_c,"🌍") if _c != "Hepsi" else "🌍"
-        if _c == sel_country:
-            c_pills += f'<span style="background:#378ADD;color:white;border-radius:16px;padding:3px 10px;font-size:12px;white-space:nowrap;flex-shrink:0">{_icon}</span>'
-        else:
-            c_pills += f'<span style="background:var(--color-background-secondary);border:1px solid var(--color-border-tertiary);border-radius:16px;padding:3px 10px;font-size:12px;white-space:nowrap;flex-shrink:0">{_icon}</span>'
-    c_pills += '</div>'
-    st.markdown(c_pills, unsafe_allow_html=True)
-    
-    # Hidden selectbox for actual selection
+    shown = ordered[:20]
     _c_idx = shown.index(sel_country) if sel_country in shown else 0
-    _new_c = st.selectbox("Ülke", shown, index=_c_idx,
-                          format_func=lambda c: f"{country_icons.get(c,'🌍')} {c}" if c!="Hepsi" else "🌍 Hepsi",
+    _new_c = st.selectbox("Ülke filtrele", shown, index=_c_idx,
                           label_visibility="collapsed", key=f"csel_{sport_name}")
     if _new_c != sel_country:
         st.session_state[country_filter_key] = _new_c
         st.rerun()
-    
     if sel_country != "Hepsi":
         pre_all = [p for p in pre_all if p.get("country","") == sel_country]
 
@@ -1191,16 +1199,16 @@ def match_card(p,raw_list):
             </div>""",unsafe_allow_html=True)
         st.markdown(f'<div class="bulk-result">{res}</div>',unsafe_allow_html=True)
 
-    # Quick action buttons
-    _b1, _b2, _b3 = st.columns(3)
-    with _b1:
+    # Quick action buttons - compact inline
+    _qc = st.columns([2,2,1])
+    with _qc[0]:
         if st.button("🤖 Analiz", key=f"quick_{mk}", use_container_width=True):
             st.session_state[f"quick_run_{mk}"] = "single"
-    with _b2:
+    with _qc[1]:
         if st.button("⚡ 4 Model", key=f"quickcmp_{mk}", use_container_width=True):
             st.session_state[f"quick_run_{mk}"] = "compare"
-    with _b3:
-        if st.button("🌐⚡", key=f"quickws_{mk}", use_container_width=True):
+    with _qc[2]:
+        if st.button("🌐", key=f"quickws_{mk}", use_container_width=True):
             st.session_state[f"quick_run_{mk}"] = "web_compare"
 
     # Show stored quick analysis results
