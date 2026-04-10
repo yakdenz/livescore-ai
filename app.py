@@ -836,12 +836,13 @@ with st.sidebar:
         st.rerun()
     st.caption("API-Sports ücretsiz\n100 istek/gün/branş")
 
-# ── BRANŞ SEÇİCİ ─────────────────────────────────────────────────
+# ── BRANŞ SEÇİCİ (radio yatay - maç öncesi sekmeleri gibi) ──────
 sport_list = list(SPORT_CONFIG.keys())
+sport_labels = [f"{SPORT_CONFIG[s]['emoji']} {s.split()[-1]}" for s in sport_list]
 _sel_idx = sport_list.index(sport_name) if sport_name in sport_list else 0
-_new_sport = st.selectbox("Branş", sport_list, index=_sel_idx,
-                          format_func=lambda s: f"{SPORT_CONFIG[s]['emoji']} {s.split()[-1]}",
-                          label_visibility="collapsed", key="sport_sel_main")
+_chosen = st.radio("Branş", sport_labels, index=_sel_idx, horizontal=True,
+                   label_visibility="collapsed", key="sport_radio_main")
+_new_sport = sport_list[sport_labels.index(_chosen)]
 if _new_sport != sport_name:
     st.session_state.sport_name = _new_sport
     st.rerun()
@@ -1076,10 +1077,10 @@ if all_countries:
                      "Czech Republic":"🇨🇿","Sweden":"🇸🇪","Norway":"🇳🇴","Denmark":"🇩🇰","Switzerland":"🇨🇭"}
     
     sel_country = st.session_state.get(country_filter_key, "Hepsi")
-    shown = ordered[:20]
+    shown = ordered[:10]
     _c_idx = shown.index(sel_country) if sel_country in shown else 0
-    _new_c = st.selectbox("Ülke filtrele", shown, index=_c_idx,
-                          label_visibility="collapsed", key=f"csel_{sport_name}")
+    _new_c = st.radio("Ülke", shown, index=_c_idx, horizontal=True,
+                      label_visibility="collapsed", key=f"cradio_{sport_name}")
     if _new_c != sel_country:
         st.session_state[country_filter_key] = _new_c
         st.rerun()
