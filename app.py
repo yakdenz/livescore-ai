@@ -670,6 +670,46 @@ Her maç için TAM OLARAK bu formatı kullan:
 ---
 Özgüvenli ve net yaz."""
 
+def build_news_prompt(home, away, sport_name, league=""):
+    """Güçlendirilmiş Gemini haber/sakat/form prompt."""
+    today = datetime.now(TZ_TR).strftime("%d %B %Y")
+    sl = sport_name.lower()
+    is_basketball = any(w in sl for w in ["basket","nba"])
+    is_football   = "futbol" in sl
+
+    if is_basketball:
+        focus = "sakatlık listesi (injury report), rotasyon, son 5 maç formu, back-to-back durumu"
+    elif is_football:
+        focus = "sakatlık/ceza listesi, 11 tahmini, son form, H2H geçmişi, teknik direktör açıklaması"
+    else:
+        focus = "sakatlık, form, son haberler"
+
+    return f"""Bugün {today}. {league} liginde {home} - {away} ({sport_name}) maçı var.
+Aşağıdaki konularda GÜNCEL bilgi ver ({focus}):
+
+1. 🏥 {home} kadro/sakatlık durumu
+2. 🏥 {away} kadro/sakatlık durumu  
+3. 📊 Son form (her takım son 3 maç)
+4. 🔑 Maçı belirleyecek kritik faktör
+
+Kısa ve net, Türkçe yaz. Sadece güncel ve doğrulanmış bilgi kullan."""
+
+def fetch_gemini_local_predictions(sport_name, date_str, league_filter=""):
+    """Gemini ile yerel bahis sitelerinden tahmin çek."""
+    today_tr = datetime.strptime(date_str, "%Y-%m-%d").strftime("%d %B %Y")
+    league_txt = f"{league_filter} ligi" if league_filter else sport_name
+    prompt = f"""{today_tr} tarihindeki {league_txt} maçları için Türkiye'deki bahis sitelerinin (Misli, Nesine, Bilyoner, İddaa) 
+ve uluslararası tahmin sitelerinin öngörülerini ara ve özetle.
+
+Her maç için şu formatta ver:
+Ev Takımı - Deplasman Takımı:
+🏆 Favori: [takım veya beraberlik]
+📈 Popüler bahis: [1, X, 2 veya üst/alt]
+💡 [1 cümle gerekçe]
+
+Sadece bugünkü {league_txt} maçlarını listele. Türkçe yaz."""
+    return prompt
+
 # ── PARSE ─────────────────────────────────────────────────────────
 def parse(m,sk):
     try: home=m["teams"]["home"]["name"]
@@ -830,9 +870,11 @@ def compare_all_models(prompt,p,_sport_name=""):
                     unsafe_allow_html=True
                 )
             elif res["err"]:
-                st.markdown(f"""<div style="border:1px solid #888;border-radius:10px;padding:10px;text-align:center">
+                # Hatanın ilk 40 karakterini göster
+                err_short = str(res["err"])[:40].replace("⚠️","").strip()
+                st.markdown(f"""<div style="border:1px solid #f87171;border-radius:10px;padding:8px;text-align:center">
                     <div style="font-size:10px;opacity:.6">{short_name}</div>
-                    <div style="font-size:11px;color:#888">Key yok</div>
+                    <div style="font-size:10px;color:#f87171;margin-top:2px">{err_short}</div>
                 </div>""",unsafe_allow_html=True)
             else:
                 st.markdown(f"""<div style="border:1px solid {color};border-radius:10px;padding:10px;text-align:center">
@@ -1079,7 +1121,7 @@ En az 80 maç listele."""
                 if run_t == "web_compare" and GEMINI_KEY:
                     nk = f"news_gem_{i}"
                     if nk not in st.session_state:
-                        news_t, _ = call_gemini(f"{home} vs {away}: güncel sakatlıklar. Türkçe 3 madde.", use_search=True)
+                        news_t, _ = call_gemini(build_news_prompt(home, away, sport_name, league), use_search=True)
                         st.session_state[nk] = news_t or ""
                     if st.session_state.get(nk):
                         prompt += f"\n\nGÜNCEL:\n{st.session_state[nk]}"
@@ -1293,7 +1335,7 @@ def match_card(p,raw_list):
             if run_type in ["web_compare","web_single"] and GEMINI_KEY:
                 news_k = f"news_{mk}"
                 if news_k not in st.session_state:
-                    news_t, _ = call_gemini(f"{p['home']} vs {p['away']}: güncel sakatlıklar. Türkçe 3 madde.", use_search=True)
+                    news_t, _ = call_gemini(build_news_prompt(p['home'], p['away'], sport_name, p.get('league','')), use_search=True)
                     st.session_state[news_k] = news_t or ""
                 if st.session_state.get(news_k):
                     q_prompt += f"\n\nGÜNCEL:\n{st.session_state[news_k]}"
@@ -1367,7 +1409,7 @@ def match_card(p,raw_list):
                         news_key = f"news_{p['mid']}"
                         if news_key not in st.session_state:
                             with st.spinner("🌐 Güncel haberler çekiliyor..."):
-                                news_prompt = f"{p['home']} vs {p['away']} maçı: güncel sakatlıklar, form ve son haberler. Türkçe 3 madde."
+                                news_prompt = build_news_prompt(p['home'], p['away'], sport_name, p.get('league',''))
                                 news_text, news_err = call_gemini(news_prompt, use_search=True)
                             st.session_state[news_key] = news_text or ""
                         news_text = st.session_state.get(news_key, "")
@@ -1412,7 +1454,7 @@ def match_card(p,raw_list):
                         news_key2 = f"news_{mk}"
                         if news_key2 not in st.session_state:
                             with st.spinner("🌐 Güncel haberler çekiliyor..."):
-                                news_prompt = f"{p['home']} vs {p['away']} ({sport_name}): güncel sakatlıklar ve son haberler. Türkçe 3 madde."
+                                news_prompt = build_news_prompt(p['home'], p['away'], sport_name, p.get('league',''))
                                 news_text, news_err = call_gemini(news_prompt, use_search=True)
                             st.session_state[news_key2] = news_text or ""
                         news_text = st.session_state.get(news_key2, "")
@@ -1429,10 +1471,11 @@ def match_card(p,raw_list):
 
 # ── SEKMELER ─────────────────────────────────────────────────────
 hist_count = len(st.session_state.analysis_history)
-tab_pre,tab_live,tab_hist=st.tabs([
+tab_pre,tab_live,tab_hist,tab_local=st.tabs([
     f"🕐 Maç Öncesi ({len(pre_all)})",
     f"🔴 Canlı & Bitti ({len(live_parsed)})",
-    f"📊 Tahmin Geçmişi ({hist_count})"
+    f"📊 Tahmin Geçmişi ({hist_count})",
+    "🌍 Yerel Tahminler"
 ])
 
 with tab_pre:
@@ -1554,3 +1597,37 @@ with tab_hist:
                     st.markdown(f'<div class="ai-box" style="border-color:{color}55;margin-bottom:8px">{h["text"]}</div>', unsafe_allow_html=True)
 
             st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
+
+with tab_local:
+    st.markdown("### 🌍 Yerel & Uluslararası Tahminler")
+    st.caption("Misli, Nesine, Bilyoner, İddaa ve uluslararası tahmin sitelerinin öngörüleri Gemini ile çekilir.")
+
+    if not GEMINI_KEY:
+        st.warning("⚠️ Bu özellik için Gemini API key gerekli.")
+    else:
+        # Lig filtresi
+        local_league = st.text_input("🔍 Lig veya takım filtresi (boş = tüm branş)", "", key="local_league_filter")
+        local_cache_key = f"local_preds_{sport_name}_{date_str}_{local_league}"
+
+        col1, col2 = st.columns([2,1])
+        with col1:
+            fetch_btn = st.button("🌐 Yerel Tahminleri Çek", type="primary", use_container_width=True, key="fetch_local")
+        with col2:
+            if st.button("🗑️ Temizle", use_container_width=True, key="clear_local"):
+                if local_cache_key in st.session_state:
+                    del st.session_state[local_cache_key]
+                st.rerun()
+
+        if fetch_btn:
+            with st.spinner("🌐 Tahmin siteleri taranıyor..."):
+                local_prompt = fetch_gemini_local_predictions(sport_name, date_str, local_league)
+                local_text, local_err = call_gemini(local_prompt, use_search=True)
+            if local_err:
+                st.error(local_err)
+            elif local_text:
+                st.session_state[local_cache_key] = local_text
+                st.rerun()
+
+        if st.session_state.get(local_cache_key):
+            st.markdown(f'<div class="news-box" style="font-size:14px;line-height:1.8">{st.session_state[local_cache_key]}</div>', unsafe_allow_html=True)
+            st.caption(f"📅 {date_str} | {sport_name} | Gemini web araması ile çekildi")
