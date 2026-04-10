@@ -102,12 +102,12 @@ def api_get(url, params=None):
             errs=d.get("errors",{})
             if errs and errs not in ([],{}):
                 msg=list(errs.values())[0] if isinstance(errs,dict) else str(errs)
-                st.toast(str(msg)[:120],icon="⚠️")
+                print(f"API error: {msg}")
                 return None
             return d
-        st.toast(f"HTTP {r.status_code}",icon="⚠️")
+        print(f"HTTP {r.status_code}: {url}")
     except Exception as e:
-        st.toast(str(e)[:80],icon="⚠️")
+        print(f"API exception: {e}")
     return None
 
 # Maç öncesi: günlük cache (sabah 1 kez çekilir, gün boyunca sabit)
