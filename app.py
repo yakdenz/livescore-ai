@@ -827,8 +827,7 @@ with st.sidebar:
     st.caption("API-Sports ücretsiz\n100 istek/gün/branş")
 
 # ── HEADER ───────────────────────────────────────────────────────
-st.markdown(f"## {cfg['emoji']} {sport_name}", unsafe_allow_html=False)
-st.caption(f"📅 {sel_date.strftime('%d %B %Y')} · {ai_model.split()[0]} {ai_model.split()[1] if len(ai_model.split())>1 else ''} · {cost}")
+st.markdown(f'<p style="font-size:16px;font-weight:600;margin:4px 0">{cfg["emoji"]} {sport_name} &nbsp;<span style="font-size:12px;opacity:.6;font-weight:400">{sel_date.strftime("%d %b")} · {ai_model.split()[1] if len(ai_model.split())>1 else ai_model.split()[0]}</span></p>', unsafe_allow_html=True)
 
 if not API_KEY or "buraya" in API_KEY:
     st.error("⚠️ `.env` dosyasına `API_SPORTS_KEY` ekle."); st.stop()
@@ -953,37 +952,36 @@ pre_minor=[p for p in pre_all if not p["is_major"]]
 live_parsed=[parse(m,cfg["key"]) for m in st.session_state.live_data]
 live_now_count=len([p for p in live_parsed if p["sh"] in LIVE_SH])
 
-c1,c2,c3,c4=st.columns(4)
-c1.metric("Maç Öncesi",len(pre_all))
-c2.metric("🔴 Canlı",live_now_count)
-c3.metric("✅ Bitti",len([p for p in live_parsed if p["sh"] in DONE_SH]))
-c4.metric("Toplam",len(pre_all)+len(live_parsed))
+done_count = len([p for p in live_parsed if p["sh"] in DONE_SH])
+total = len(pre_all)+len(live_parsed)
+st.markdown(f'<div style="font-size:12px;opacity:.6;margin:4px 0 8px">🕐 {len(pre_all)} maç öncesi &nbsp;·&nbsp; 🔴 {live_now_count} canlı &nbsp;·&nbsp; ✅ {done_count} bitti</div>', unsafe_allow_html=True)
 
 # ── TOPLU ANALİZ BARI ─────────────────────────────────────────────
 all_p=pre_all+live_parsed
 sel_count=len(st.session_state.selected)
-bar_cols=st.columns([5,2,2])
-with bar_cols[0]:
-    st.markdown(f"**☑️ {sel_count} maç seçildi**" if sel_count else "☑️ Maçların yanındaki kutucukları işaretle")
-with bar_cols[1]:
-    if sel_count and st.button("🤖 Toplu Analiz",type="primary",use_container_width=True):
-        selected_p=[p for p in all_p if str(p["mid"]) in st.session_state.selected]
-        mi=[{"home":p["home"],"away":p["away"],"h_score":p["h_score"],
-             "a_score":p["a_score"],"league":p["league"],"status":p["status_txt"]} for p in selected_p]
-        prompt=bulk_prompt(mi,sport_name)
-        with st.spinner(f"{len(selected_p)} maç analiz ediliyor..."):
-            text,err=run_ai(prompt,ai_model)
-        if err: st.error(err)
-        elif text:
-            st.success("✅ Tamamlandı!")
-            blocks=re.split(r'\n(?=\d+\.)',text.strip())
-            for i,p in enumerate(selected_p):
-                mk=str(p["mid"])
-                st.session_state.bulk_results[mk]=blocks[i].strip() if i<len(blocks) else text
-            st.rerun()
-with bar_cols[2]:
-    if sel_count and st.button("🗑️ Sıfırla",use_container_width=True):
-        st.session_state.selected=set(); st.rerun()
+if sel_count:
+    bar_cols=st.columns([4,3,2])
+    with bar_cols[0]:
+        st.markdown(f'<span style="font-size:13px">☑️ {sel_count} seçili</span>', unsafe_allow_html=True)
+    with bar_cols[1]:
+        if st.button("🤖 Toplu Analiz",type="primary",use_container_width=True):
+            selected_p=[p for p in all_p if str(p["mid"]) in st.session_state.selected]
+            mi=[{"home":p["home"],"away":p["away"],"h_score":p["h_score"],
+                 "a_score":p["a_score"],"league":p["league"],"status":p["status_txt"]} for p in selected_p]
+            prompt=bulk_prompt(mi,sport_name)
+            with st.spinner(f"{len(selected_p)} maç analiz ediliyor..."):
+                text,err=run_ai(prompt,ai_model)
+            if err: st.error(err)
+            elif text:
+                st.success("✅ Tamamlandı!")
+                blocks=re.split(r'\n(?=\d+\.)',text.strip())
+                for i,p in enumerate(selected_p):
+                    mk=str(p["mid"])
+                    st.session_state.bulk_results[mk]=blocks[i].strip() if i<len(blocks) else text
+                st.rerun()
+    with bar_cols[2]:
+        if st.button("🗑️",use_container_width=True):
+            st.session_state.selected=set(); st.rerun()
 
 st.markdown("---")
 
@@ -994,22 +992,23 @@ def match_card(p,raw_list):
     mk=str(p["mid"])
     is_live_now=p["sh"] in LIVE_SH
 
-    chk_col,info_col,badge_col=st.columns([0.4,5,1.5])
-    with chk_col:
-        checked=st.checkbox("",key=f"chk_{mk}",value=(mk in st.session_state.selected),label_visibility="collapsed")
-        if checked: st.session_state.selected.add(mk)
-        else: st.session_state.selected.discard(mk)
-    with info_col:
-        st.caption(f"🏆 {p.get('country','')}  ·  {p['league']}")
-    with badge_col:
-        st.markdown(badge(p["sh"],p.get("elapsed"),p.get("kickoff","")),unsafe_allow_html=True)
-
-    score_col = "#ff4444" if is_live_now else "inherit"
-    st.markdown(f"""<div style="display:flex;align-items:center;justify-content:space-between;padding:8px 4px;gap:4px">
-        <div style="flex:1;text-align:right;font-size:14px;font-weight:600;line-height:1.2">{p['home']}</div>
-        <div style="min-width:70px;text-align:center;font-size:20px;font-weight:bold;color:{score_col};flex-shrink:0">{p['h_score']} – {p['a_score']}</div>
-        <div style="flex:1;text-align:left;font-size:14px;font-weight:600;line-height:1.2">{p['away']}</div>
+    score_col = "#ff4444" if is_live_now else "var(--color-text-primary)"
+    bdg = badge(p["sh"],p.get("elapsed"),p.get("kickoff",""))
+    league_short = p["league"][:25] + ("…" if len(p["league"])>25 else "")
+    
+    # Single compact row: checkbox | home --- score --- away | time/status
+    st.markdown(f"""<div style="display:flex;align-items:center;gap:6px;padding:6px 2px;border-bottom:0.5px solid rgba(128,128,128,.1)">
+        <div style="font-size:10px;color:var(--color-text-tertiary);white-space:nowrap;min-width:50px;text-align:right">{league_short}</div>
+        <div style="flex:1;text-align:right;font-size:13px;font-weight:600">{p["home"]}</div>
+        <div style="min-width:65px;text-align:center;font-size:16px;font-weight:700;color:{score_col};white-space:nowrap">{p["h_score"]}–{p["a_score"]}</div>
+        <div style="flex:1;font-size:13px;font-weight:600">{p["away"]}</div>
+        <div style="font-size:10px;white-space:nowrap">{bdg}</div>
     </div>""", unsafe_allow_html=True)
+    
+    # Checkbox inline
+    checked=st.checkbox("☑️ seç",key=f"chk_{mk}",value=(mk in st.session_state.selected),label_visibility="collapsed")
+    if checked: st.session_state.selected.add(mk)
+    else: st.session_state.selected.discard(mk)
 
     if mk in st.session_state.bulk_results:
         res=st.session_state.bulk_results[mk]
@@ -1206,10 +1205,9 @@ with tab_pre:
         st.info("Maç öncesi maç bulunamadı.")
     else:
         if pre_major:
-            st.markdown("### 🌟 Majör Ligler")
             for p in pre_major: match_card(p,pre_raw)
         if pre_minor:
-            st.markdown(f"### 📋 Diğer Ligler ({len(pre_minor)})")
+            if pre_major: st.markdown(f'<div style="font-size:11px;opacity:.5;margin:8px 0 4px">Diğer ligler ({len(pre_minor)})</div>', unsafe_allow_html=True)
             for p in pre_minor: match_card(p,pre_raw)
 
 with tab_live:
@@ -1243,10 +1241,9 @@ with tab_live:
         lmaj=[p for p in live_sorted if p["is_major"]]
         lmin=[p for p in live_sorted if not p["is_major"]]
         if lmaj:
-            st.markdown("### 🌟 Majör Ligler")
             for p in lmaj: match_card(p,st.session_state.live_data)
         if lmin:
-            st.markdown(f"### 📋 Diğer Ligler ({len(lmin)})")
+            if lmaj: st.markdown(f'<div style="font-size:11px;opacity:.5;margin:8px 0 4px">Diğer ({len(lmin)})</div>', unsafe_allow_html=True)
             for p in lmin: match_card(p,st.session_state.live_data)
 
 with tab_hist:
