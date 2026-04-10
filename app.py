@@ -112,14 +112,20 @@ def api_get(url, params=None):
 
 # Maç öncesi: günlük cache (sabah 1 kez çekilir, gün boyunca sabit)
 @st.cache_data(ttl=86400, show_spinner=False)
-def fetch_prematch_cached(sk, base, ds):
+def fetch_prematch_cached(sk, base, ds, _api_key):
     ep={"mma":"fights","formula-1":"races"}.get(sk,"games")
     if sk=="football": ep="fixtures"
-    d=api_get(f"{base}/{ep}",{"date":ds})
-    if not d: return [], None
-    raw=[m for m in d.get("response",[]) if get_sh(m,sk) in WAIT_SH]
-    ts=datetime.now(TZ_TR).strftime("%H:%M")
-    return raw, ts
+    try:
+        r=requests.get(f"{base}/{ep}",headers={"x-apisports-key":_api_key},params={"date":ds},timeout=10)
+        if r.status_code==200:
+            d=r.json()
+            errs=d.get("errors",{})
+            if errs and errs not in ([],{}): return [],None
+            raw=[m for m in d.get("response",[]) if get_sh(m,sk) in WAIT_SH]
+            ts=datetime.now(TZ_TR).strftime("%H:%M")
+            return raw, ts
+    except: pass
+    return [], None
 
 # Canlı: cache yok, her tetiklemede taze veri
 def fetch_live_now(sk, base, ds):
@@ -521,7 +527,7 @@ if not API_KEY or "buraya" in API_KEY:
 
 # ── VERİ: MAÇ ÖNCESİ (günlük cache) ─────────────────────────────
 with st.spinner("Maç öncesi liste yükleniyor..."):
-    pre_raw, cache_ts = fetch_prematch_cached(cfg["key"],cfg["base"],date_str)
+    pre_raw, cache_ts = fetch_prematch_cached(cfg["key"],cfg["base"],date_str,API_KEY)
 
 if cache_ts:
     st.markdown(f'<span class="cache-info">📦 Maç öncesi liste bugün {cache_ts}\'de çekildi — gün boyunca sabit kalır</span>', unsafe_allow_html=True)
