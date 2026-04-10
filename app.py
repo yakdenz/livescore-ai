@@ -281,6 +281,28 @@ def extract_pred(text, sport):
                 return f"{a} – {b}"
     return None
 
+def extract_sub_pred(text, sport):
+    """Extract quarter/half/set predictions from text."""
+    if not text: return {}
+    sl = sport.lower()
+    result = {}
+    lines = text.split("\n")
+    for line in lines:
+        ll = line.lower()
+        if "1.çeyrek" in ll or "ilk çeyrek" in ll or "q1" in ll:
+            m = re.search(r'(\d{2,3})\s*[-–]\s*(\d{2,3})', line)
+            if m: result["1.Çeyrek"] = f"{m.group(1)}–{m.group(2)}"
+        elif "1.yarı" in ll or "ilk yarı" in ll or "devre" in ll:
+            m = re.search(r'(\d{1,2})\s*[-–]\s*(\d{1,2})', line)
+            if m: result["1.Yarı"] = f"{m.group(1)}–{m.group(2)}"
+        elif "ilk set" in ll or "1.set" in ll or "set skoru" in ll:
+            m = re.search(r'(\d{2})\s*[-–]\s*(\d{2})', line)
+            if m: result["1.Set"] = f"{m.group(1)}–{m.group(2)}"
+        elif "1.periyot" in ll or "ilk periyot" in ll:
+            m = re.search(r'(\d{1,2})\s*[-–]\s*(\d{1,2})', line)
+            if m: result["1.Periyot"] = f"{m.group(1)}–{m.group(2)}"
+    return result
+
 # ── PROMPTS ───────────────────────────────────────────────────────
 def form_str(fxs,tid):
     out=[]
@@ -516,15 +538,22 @@ def estimate_tokens(text):
     """Yaklaşık token sayısı (1 token ≈ 4 karakter)"""
     return len(text) // 4
 
-def show_ai(text,err,p,model_name,show_tokens=True):
+def show_ai(text,err,p,model_name,sname=None,show_tokens=True):
     if err: st.error(err); return
     if not text: return
-    pred=extract_pred(text,sport_name)
+    sname = sname or ""
+    pred=extract_pred(text,sname)
+    sub_pred = extract_sub_pred(text, sname)
     if pred:
+        sub_html = ""
+        if sub_pred:
+            items = "  ".join([f'<span style="font-size:12px;background:rgba(34,197,94,.15);padding:2px 8px;border-radius:8px;margin:2px">{k}: <b>{v}</b></span>' for k,v in sub_pred.items()])
+            sub_html = f'<div style="margin-top:6px">{items}</div>'
         st.markdown(f"""<div class="pred-box">
             <div class="pred-label">🔮 TAHMİN EDİLEN SKOR</div>
             <div class="pred-score">{pred}</div>
             <div class="pred-label">{p['home']} – {p['away']}</div>
+            {sub_html}
         </div>""",unsafe_allow_html=True)
     tokens=estimate_tokens(text)
     token_info=f' <span style="font-size:11px;opacity:.5">~{tokens} token</span>' if show_tokens else ""
@@ -533,16 +562,17 @@ def show_ai(text,err,p,model_name,show_tokens=True):
     import datetime as dt_module
     st.session_state.analysis_history.append({
         "time": dt_module.datetime.now(TZ_TR).strftime("%H:%M"),
-        "sport": sport_name,
+        "sport": sname,
         "home": p["home"], "away": p["away"],
         "league": p.get("league",""),
         "model": model_name,
         "pred": pred or "?",
+        "sub_pred": sub_pred,
         "text": text,
         "tokens": tokens
     })
 
-def compare_all_models(prompt,p):
+def compare_all_models(prompt,p,_sport_name=""):
     """Tüm modelleri paralel çalıştır ve yan yana göster"""
     models=list(AI_MODELS.keys())
     results={}
@@ -559,7 +589,7 @@ def compare_all_models(prompt,p):
     pred_cols=st.columns(len(models))
     for i,(model_name,res) in enumerate(results.items()):
         with pred_cols[i]:
-            pred=extract_pred(res["text"],sport_name) if res["text"] else None
+            pred=extract_pred(res["text"],_sport_name) if res["text"] else None
             color={"groq":"#EF9F27","gemini":"#22c55e","gpt":"#378ADD","deepseek":"#E24B4A"}.get(AI_MODELS[model_name]["id"],"#888")
             if pred:
                 st.markdown(f"""<div style="border:2px solid {color};border-radius:10px;padding:10px;text-align:center;margin-bottom:8px">
@@ -579,6 +609,7 @@ def compare_all_models(prompt,p):
 
     # Detaylı analizler - doğrudan göster
     st.markdown("### 📋 Detaylı Analizler")
+    import datetime as dt_module
     for model_name,res in results.items():
         color={"groq":"#EF9F27","gemini":"#22c55e","gpt":"#378ADD","deepseek":"#E24B4A"}.get(AI_MODELS[model_name]["id"],"#888")
         st.markdown(f"**{model_name}**")
@@ -586,7 +617,20 @@ def compare_all_models(prompt,p):
             st.error(res["err"])
         elif res["text"]:
             tokens=estimate_tokens(res["text"])
+            pred=extract_pred(res["text"],_sport_name)
             st.markdown(f'<div class="ai-box" style="border-color:{color}55">{res["text"]}<br><span style="font-size:11px;opacity:.4">~{tokens} token</span></div>',unsafe_allow_html=True)
+            # Save to history
+            st.session_state.analysis_history.append({
+                "time": dt_module.datetime.now(TZ_TR).strftime("%H:%M"),
+                "sport": _sport_name,
+                "home": p["home"], "away": p["away"],
+                "league": p.get("league",""),
+                "model": model_name,
+                "pred": pred or "?",
+                "text": res["text"],
+                "tokens": tokens,
+                "sub_pred": extract_sub_pred(res["text"],_sport_name)
+            })
         st.markdown("---")
 
 # ── SIDEBAR ───────────────────────────────────────────────────────
@@ -782,9 +826,9 @@ def match_card(p,raw_list):
                                  generic_prompt(sport_name,p["home"],p["away"],p["status_txt"],p["league"])
                     if do_single:
                         text,err=run_ai(prompt,ai_model,use_web_search=use_ws)
-                        show_ai(text,err,p,ai_model)
+                        show_ai(text,err,p,ai_model,sname=sport_name)
                     else:
-                        compare_all_models(prompt,p)
+                        compare_all_models(prompt,p,_sport_name=sport_name)
         else:
             t1,t2=st.tabs(["📋 Bilgi","🤖 AI Tahmini"])
             with t1:
@@ -814,9 +858,9 @@ def match_card(p,raw_list):
                     prompt=generic_prompt(sport_name,p["home"],p["away"],p["status_txt"],p["league"])
                     if do_single2:
                         with st.spinner("AI analiz yapıyor..."): text,err=run_ai(prompt,ai_model)
-                        show_ai(text,err,p,ai_model)
+                        show_ai(text,err,p,ai_model,sname=sport_name)
                     else:
-                        compare_all_models(prompt,p)
+                        compare_all_models(prompt,p,_sport_name=sport_name)
 
     st.markdown('<div class="divider"></div>',unsafe_allow_html=True)
 
@@ -900,11 +944,15 @@ with tab_hist:
                 st.caption(h['league'])
             with col3:
                 color={"🟡 Groq – Llama 3.3":"#EF9F27","🟢 Gemini 2.0 Flash":"#22c55e",
-                       "⚪ GPT-4o Mini":"#378ADD","🔴 DeepSeek V3":"#E24B4A"}.get(h['model'],"#888")
-                pred = h.get('pred','?')
+                       "⚪ GPT-4o Mini":"#378ADD","🔴 DeepSeek V3":"#E24B4A"}.get(h.get("model",""),"#888")
+                pred = h.get("pred","?")
                 st.markdown(f'<div style="font-size:22px;font-weight:900;color:{color}">{pred}</div>',
                             unsafe_allow_html=True)
-                st.caption(h['model'].split()[0] + " " + h['model'].split()[1] if len(h['model'].split())>1 else h['model'])
+                sub = h.get("sub_pred",{})
+                if sub:
+                    for k,v in sub.items():
+                        st.caption(f"{k}: {v}")
+                st.caption(h["model"].split()[0] + " " + h["model"].split()[1] if len(h.get("model","").split())>1 else h.get("model",""))
             with col4:
                 st.caption(f"~{h['tokens']} token")
 
