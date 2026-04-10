@@ -224,12 +224,19 @@ def call_gemini(prompt, use_search=False):
                 config = types.GenerateContentConfig(tools=[search_tool])
                 r = client.models.generate_content(
                     model="gemini-2.5-flash", contents=prompt, config=config)
-            except Exception:
-                # Fallback without search if search fails
-                r = client.models.generate_content(model="gemini-2.5-flash", contents=prompt)
+                text = r.text if r and hasattr(r,"text") else ""
+                return text, None
+            except Exception as _se:
+                if "SessionInfo" in str(_se) or "Bad message" in str(_se):
+                    # Retry without search
+                    try:
+                        r = client.models.generate_content(model="gemini-2.5-flash", contents=prompt)
+                        return r.text, None
+                    except: pass
+                return None, f"Gemini search hatası: {str(_se)[:100]}"
         else:
             r = client.models.generate_content(model="gemini-2.5-flash", contents=prompt)
-        return r.text, None
+            return r.text, None
     except Exception as e:
         err=str(e)
         if any(x in err for x in ["429","quota","EXHAUSTED"]):
@@ -797,7 +804,11 @@ def compare_all_models(prompt,p,_sport_name=""):
 with st.sidebar:
     st.title("🏟️ Canlı Skor + AI")
     st.markdown("---")
-    sport_name=st.selectbox("Branş",list(SPORT_CONFIG.keys()))
+    if "sport_name" not in st.session_state:
+        st.session_state.sport_name = list(SPORT_CONFIG.keys())[0]
+    sport_name = st.selectbox("Branş", list(SPORT_CONFIG.keys()), 
+                              index=list(SPORT_CONFIG.keys()).index(st.session_state.sport_name))
+    st.session_state.sport_name = sport_name
     cfg=SPORT_CONFIG[sport_name]
     sel_date=st.date_input("📅 Tarih",value=date.today())
     date_str=sel_date.strftime("%Y-%m-%d")
@@ -831,30 +842,21 @@ with st.sidebar:
     st.caption("API-Sports ücretsiz\n100 istek/gün/branş")
 
 # ── HEADER + HORIZONTAL SPORT SELECTOR ──────────────────────────
-# Horizontal sport tabs
 sport_list = list(SPORT_CONFIG.keys())
-sport_emojis = [SPORT_CONFIG[s]["emoji"] for s in sport_list]
 
-# Use st.columns for sport selector
-sport_cols = st.columns(len(sport_list))
-new_sport = sport_name
-for i, sn in enumerate(sport_list):
-    with sport_cols[i]:
-        scfg = SPORT_CONFIG[sn]
-        active_style = "color:#378ADD;font-weight:700;" if sn==sport_name else "opacity:.6;"
-        if st.button(scfg["emoji"], key=f"sport_btn_{sn}", help=sn, use_container_width=True):
-            new_sport = sn
+# Horizontal emoji sport buttons
+_cols = st.columns(len(sport_list))
+for _i, _sn in enumerate(sport_list):
+    with _cols[_i]:
+        _scfg = SPORT_CONFIG[_sn]
+        _is_active = _sn == sport_name
+        if st.button(_scfg["emoji"], key=f"spbtn_{_sn}", 
+                     help=_sn, use_container_width=True,
+                     type="primary" if _is_active else "secondary"):
+            st.session_state.sport_name = _sn
+            st.rerun()
 
-if new_sport != sport_name:
-    st.session_state["_sport"] = new_sport
-    st.rerun()
-
-# Apply sport from session if changed
-if "_sport" in st.session_state:
-    sport_name = st.session_state.pop("_sport")
-    cfg = SPORT_CONFIG[sport_name]
-
-st.markdown(f'<p style="font-size:15px;font-weight:600;margin:2px 0 6px">{cfg["emoji"]} {sport_name} <span style="font-size:11px;opacity:.5;font-weight:400">{sel_date.strftime("%d %b")} · {ai_model.split()[1] if len(ai_model.split())>1 else ai_model.split()[0]}</span></p>', unsafe_allow_html=True)
+st.markdown(f'<p style="font-size:15px;font-weight:600;margin:4px 0 6px">{cfg["emoji"]} {sport_name} <span style="font-size:11px;opacity:.5;font-weight:400">{sel_date.strftime("%d %b")} · {ai_model.split()[1] if len(ai_model.split())>1 else ai_model.split()[0]}</span></p>', unsafe_allow_html=True)
 
 if not API_KEY or "buraya" in API_KEY:
     st.error("⚠️ `.env` dosyasına `API_SPORTS_KEY` ekle."); st.stop()
