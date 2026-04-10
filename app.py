@@ -99,8 +99,18 @@ def get_sh(m, sk):
 
 def kickoff_tr(m, sk):
     try:
-        ds = m["fixture"]["date"] if sk=="football" else (m.get("date","") or m.get("time","") or "")
+        if sk=="football":
+            ds = m["fixture"]["date"]
+        elif sk=="tennis":
+            ds = m.get("date","") or m.get("time","") or ""
+        else:
+            ds = m.get("date","") or m.get("time","") or m.get("timestamp","") or ""
         if not ds: return ""
+        # Handle unix timestamp
+        if isinstance(ds, (int, float)):
+            from datetime import datetime as _dt
+            return _dt.fromtimestamp(ds, tz=TZ_TR).strftime("%H:%M")
+        ds = str(ds)
         dt = datetime.fromisoformat(ds.replace("Z","+00:00"))
         if dt.tzinfo is None: dt = dt.replace(tzinfo=timezone.utc)
         return dt.astimezone(TZ_TR).strftime("%H:%M")
@@ -817,8 +827,8 @@ with st.sidebar:
     st.caption("API-Sports ücretsiz\n100 istek/gün/branş")
 
 # ── HEADER ───────────────────────────────────────────────────────
-st.title(f"{cfg['emoji']} {sport_name} Skorları")
-st.caption(f"📅 {sel_date.strftime('%d %B %Y')}  ·  {ai_model}  ·  {cost}")
+st.markdown(f"## {cfg['emoji']} {sport_name}", unsafe_allow_html=False)
+st.caption(f"📅 {sel_date.strftime('%d %B %Y')} · {ai_model.split()[0]} {ai_model.split()[1] if len(ai_model.split())>1 else ''} · {cost}")
 
 if not API_KEY or "buraya" in API_KEY:
     st.error("⚠️ `.env` dosyasına `API_SPORTS_KEY` ekle."); st.stop()
@@ -836,9 +846,10 @@ if not pre_raw and GEMINI_KEY:
         st.warning(f"⚠️ API'den {sport_name} maçı gelmedi. Gemini ile çekebilirsiniz.")
         if st.button(f"🌐 Gemini ile Bugünkü {sport_name} Maçlarını Çek", key="gemini_fallback_btn"):
             with st.spinner("Gemini maç listesi arıyor..."):
-                fallback_prompt = f"""{date_str} tarihindeki {sport_name} maçlarını JSON formatında listele.
-Mümkün olduğunca fazla maç dahil et — majör, minör, tüm ligler.
-Yanıt SADECE şu JSON formatında olsun, başka metin olmasın:
+                fallback_prompt = f"""{date_str} tarihindeki {sport_name} maçlarını JSON listele.
+TÜM ligleri dahil et: Süper Lig, Premier League, La Liga, Serie A, Bundesliga, Ligue 1, Champions League, Europa League, Conference League, Championship, Serie B, 2.Bundesliga, Eredivisie, Primeira Liga, Süper Lig, MLS, Brasileirao, Argentine Primera, Jupiler Pro, Super Lig Türkiye, Ukrainian Premier, Russian Premier, Czech Liga, Polish Ekstraklasa, Swiss SL, Belgian Pro, Scottish Prem, Norwegian Eliteserien, Danish Superliga, Swedish Allsvenskan, ve diğer tüm ligler.
+En az 50-100 maç listele. 
+Yanıt SADECE JSON array olsun, başka metin YOK:
 [
   {{"home": "Takım A", "away": "Takım B", "league": "Lig Adı", "country": "Ülke", "time": "20:00"}},
   ...
@@ -993,12 +1004,12 @@ def match_card(p,raw_list):
     with badge_col:
         st.markdown(badge(p["sh"],p.get("elapsed"),p.get("kickoff","")),unsafe_allow_html=True)
 
-    c1,c2,c3=st.columns([4,2,4])
-    with c1: st.markdown(f"<div class='team-name' style='text-align:right'>{p['home']}</div>",unsafe_allow_html=True)
-    with c2:
-        col="#ff4444" if is_live_now else "inherit"
-        st.markdown(f"<div class='score-box' style='color:{col}'>{p['h_score']} – {p['a_score']}</div>",unsafe_allow_html=True)
-    with c3: st.markdown(f"<div class='team-name'>{p['away']}</div>",unsafe_allow_html=True)
+    score_col = "#ff4444" if is_live_now else "inherit"
+    st.markdown(f"""<div style="display:flex;align-items:center;justify-content:space-between;padding:8px 4px;gap:4px">
+        <div style="flex:1;text-align:right;font-size:14px;font-weight:600;line-height:1.2">{p['home']}</div>
+        <div style="min-width:70px;text-align:center;font-size:20px;font-weight:bold;color:{score_col};flex-shrink:0">{p['h_score']} – {p['a_score']}</div>
+        <div style="flex:1;text-align:left;font-size:14px;font-weight:600;line-height:1.2">{p['away']}</div>
+    </div>""", unsafe_allow_html=True)
 
     if mk in st.session_state.bulk_results:
         res=st.session_state.bulk_results[mk]
@@ -1010,6 +1021,55 @@ def match_card(p,raw_list):
                 <div class="pred-label">{p['home']} – {p['away']}</div>
             </div>""",unsafe_allow_html=True)
         st.markdown(f'<div class="bulk-result">{res}</div>',unsafe_allow_html=True)
+
+    # Quick action buttons outside expander
+    qa1, qa2, qa3 = st.columns([1,1,1])
+    with qa1:
+        if st.button("🤖 Analiz", key=f"quick_{mk}", use_container_width=True):
+            st.session_state[f"quick_run_{mk}"] = "single"
+    with qa2:
+        if st.button("⚡ Karşılaştır", key=f"quickcmp_{mk}", use_container_width=True):
+            st.session_state[f"quick_run_{mk}"] = "compare"
+    with qa3:
+        if st.button("🌐+⚡", key=f"quickws_{mk}", use_container_width=True):
+            st.session_state[f"quick_run_{mk}"] = "web_compare"
+
+    # Run quick analysis if triggered
+    if st.session_state.get(f"quick_run_{mk}"):
+        run_type = st.session_state[f"quick_run_{mk}"]
+        del st.session_state[f"quick_run_{mk}"]
+        with st.spinner("Analiz yapılıyor..."):
+            if is_football:
+                sd = fetch_stats(p["mid"]) if p["sh"]!="NS" else []
+                ed = fetch_events(p["mid"]) if p["sh"]!="NS" else []
+                hf = fetch_form(p["hid"],p["lid"],p["season"])
+                af = fetch_form(p["aid"],p["lid"],p["season"])
+                hs = fetch_tstat(p["hid"],p["lid"],p["season"])
+                as_ = fetch_tstat(p["aid"],p["lid"],p["season"])
+                inj_h = fetch_injuries(p["hid"],p["season"])
+                inj_a = fetch_injuries(p["aid"],p["season"])
+                h2h = fetch_h2h(p["hid"],p["aid"])
+                stand = fetch_standings(p["lid"],p["season"])
+                pred = fetch_predictions(p["mid"])
+                raw = next((m for m in raw_list if m["fixture"]["id"]==p["mid"]),None)
+                q_prompt = football_prompt(raw,sd,ed,hf,af,hs,as_,inj_h,inj_a,h2h,stand,pred) if raw else generic_prompt(sport_name,p["home"],p["away"],p["status_txt"],p["league"])
+            else:
+                q_prompt = generic_prompt(sport_name,p["home"],p["away"],p["status_txt"],p["league"])
+
+            if run_type in ["web_compare","web_single"] and GEMINI_KEY:
+                news_k = f"news_{mk}"
+                if news_k not in st.session_state:
+                    news_t, _ = call_gemini(f"{p['home']} vs {p['away']}: güncel sakatlıklar. Türkçe 3 madde.", use_search=True)
+                    st.session_state[news_k] = news_t or ""
+                if st.session_state.get(news_k):
+                    st.markdown(f'<div class="news-box">🌐 {st.session_state[news_k]}</div>', unsafe_allow_html=True)
+                    q_prompt += f"\n\nGÜNCEL:\n{st.session_state[news_k]}"
+
+        if run_type == "single":
+            text,err = run_ai(q_prompt, ai_model)
+            show_ai(text, err, p, ai_model, sname=sport_name)
+        else:
+            compare_all_models(q_prompt, p, _sport_name=sport_name)
 
     with st.expander("📊 Detaylar & 🤖 Tekli AI Tahmini"):
         if is_football:
