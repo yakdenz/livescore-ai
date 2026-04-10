@@ -259,7 +259,7 @@ def fetch_predictions(fid):
 
 # ── AI ────────────────────────────────────────────────────────────
 def call_groq(prompt):
-    if not GROQ_KEY: return None,"⚠️ Groq key bulunamadı (.env → GROQ_API_KEY)"
+    if not GROQ_KEY: return None,"⚠️ Groq key bulunamadı (Streamlit Secrets → GROQ_API_KEY)"
     try:
         from groq import Groq
         r=Groq(api_key=GROQ_KEY).chat.completions.create(
@@ -271,7 +271,7 @@ def call_groq(prompt):
         return None,f"Groq hatası: {e}"
 
 def call_gemini(prompt, use_search=False):
-    if not GEMINI_KEY: return None,"⚠️ Gemini key bulunamadı (.env → GEMINI_API_KEY)"
+    if not GEMINI_KEY: return None,"⚠️ Gemini key bulunamadı (Streamlit Secrets → GEMINI_API_KEY)"
     try:
         from google import genai
         client = genai.Client(api_key=GEMINI_KEY)
@@ -297,7 +297,7 @@ def call_gemini(prompt, use_search=False):
         return None,f"Gemini hatası: {err[:200]}"
 
 def call_deepseek(prompt):
-    if not DEEPSEEK_KEY: return None,"⚠️ DeepSeek key bulunamadı (.env → DEEPSEEK_API_KEY)"
+    if not DEEPSEEK_KEY: return None,"⚠️ DeepSeek key bulunamadı (Streamlit Secrets → DEEPSEEK_API_KEY)"
     try:
         from openai import OpenAI
         r=OpenAI(api_key=DEEPSEEK_KEY,base_url="https://api.deepseek.com").chat.completions.create(
@@ -309,7 +309,7 @@ def call_deepseek(prompt):
         return None,f"DeepSeek hatası: {e}"
 
 def call_gpt(prompt):
-    if not OPENAI_KEY: return None,"⚠️ OpenAI key bulunamadı (.env → OPENAI_API_KEY)"
+    if not OPENAI_KEY: return None,"⚠️ OpenAI key bulunamadı (Streamlit Secrets → OPENAI_API_KEY)"
     try:
         from openai import OpenAI
         r=OpenAI(api_key=OPENAI_KEY).chat.completions.create(
@@ -327,6 +327,51 @@ def run_ai(prompt, model_name, use_web_search=False):
     if mid=="deepseek": return call_deepseek(prompt)
     if mid=="gpt":      return call_gpt(prompt)
     return None,"Model bulunamadı"
+
+
+def parse_gemini_match_list(raw_text):
+    import json as _json
+    clean = (raw_text or "").strip()
+    if not clean:
+        return []
+    for tag in ["```json", "```JSON", "```Json", "```"]:
+        clean = clean.replace(tag, "")
+    clean = clean.strip()
+
+    # First try direct JSON array/object extraction
+    candidates = []
+    start_arr = clean.find("[")
+    end_arr = clean.rfind("]") + 1
+    if start_arr >= 0 and end_arr > start_arr:
+        candidates.append(clean[start_arr:end_arr])
+
+    start_obj = clean.find("{")
+    end_obj = clean.rfind("}") + 1
+    if start_obj >= 0 and end_obj > start_obj:
+        candidates.append(clean[start_obj:end_obj])
+
+    for cand in candidates:
+        try:
+            data = _json.loads(cand)
+            if isinstance(data, list):
+                return data
+            if isinstance(data, dict):
+                for k in ["matches", "games", "fixtures", "response", "items", "data"]:
+                    v = data.get(k)
+                    if isinstance(v, list):
+                        return v
+        except:
+            pass
+
+    # Last resort: try line-based object recovery
+    matches = re.findall(r'\{[^{}]+"home"[^{}]+"away"[^{}]+\}', clean, re.DOTALL)
+    out = []
+    for m in matches:
+        try:
+            out.append(_json.loads(m))
+        except:
+            pass
+    return out
 
 def extract_pred(text, sport):
     """Extract FINAL score prediction only - ignore quarter/set/half scores."""
@@ -359,7 +404,7 @@ def extract_pred(text, sport):
                 return f"{a} – {b}"
     else:
         # Direct pattern search first
-        direct = re.search(r'(?:tahmin edilen skor|tahmin)[:\s]+([0-9]{1,2})\s*[-–]\s*([0-9]{1,2})', text, re.IGNORECASE)
+        direct = re.search(r'(?:tahmin edilen skor|final tahmin|final skor|maç tahmini|tahmin)[:\s]+([0-9]{1,2})\s*[-–]\s*([0-9]{1,2})', text, re.IGNORECASE)
         if direct:
             return f"{direct.group(1)} – {direct.group(2)}"
         is_set_sport = any(w in sport.lower() for w in ["voleybol","hentbol","rugby"])
@@ -577,25 +622,27 @@ def football_prompt(match,stats,events,hf,af,hs,as_,inj_h=None,inj_a=None,h2h=No
     return f"""Sen profesyonel bir futbol analisti ve bahis danışmanısın. Türkçe, özgüvenli yaz.
 
 MAÇ: {country} – {league} ({season})
-EV SAHİBİ: {home} | DEPLASMAN: {away} | Anlık skor: {h_g}–{a_g} | Durum: {durum}
+{home} vs {away} | Skor: {h_g}–{a_g} | Durum: {durum}
 FORM: {home}: {form_str(hf,hid)} | {away}: {form_str(af,aid)}
 SEZON: {season_str(hs,home)} / {season_str(as_,away)}
 {sb}
 {eb}
 
 ÇOK ÖNEMLİ:
-- Yazacağın tüm skorlar HER ZAMAN Ev Sahibi - Deplasman sırasıyla olmalı.
+- Skor formatı HER ZAMAN Ev Sahibi - Deplasman olacak.
 - İlk sayı {home}, ikinci sayı {away} içindir.
-- Deplasman favori olsa bile takım sırasını asla ters çevirme.
+- Deplasman favori olsa bile sıra değişmeyecek.
 
 GÖREVİN:
 1. 📊 MAÇ ANALİZİ – Hangi takım üstün, neden?
 2. 🔮 TAHMİN – Kesin final skoru. MUTLAKA yaz: "Tahmin edilen skor: X-Y"
 3. ⚡ KRİTİK FAKTÖR – Maçı belirleyecek tek unsur
 4. 💡 EK BİLGİ – Derbi, puan durumu, sakatlık, haber
+
 5. 🔮 1.YARI TAHMİNİ – İlk yarı skoru (örn: 1-0)
 
 Mutlaka skor verirken Ev Sahibi - Deplasman formatını koru.
+
 6-8 cümle. Özgüvenli yaz."""
 
 def generic_prompt(sport_name,home,away,status,league):
@@ -646,9 +693,10 @@ def generic_prompt(sport_name,home,away,status,league):
 MAÇ: {league} | EV SAHİBİ: {home} | DEPLASMAN: {away} | Durum: {status}
 
 ÇOK ÖNEMLİ:
-- Yazacağın tüm skorlar HER ZAMAN Ev Sahibi - Deplasman sırasıyla olmalı.
-- İlk sayı {home}, ikinci sayı {away} içindir.
-- Deplasman favori olsa bile takım sırasını asla ters çevirme.
+- Skor formatı HER ZAMAN Ev Sahibi - Deplasman olacak.
+- Yani ilk sayı {home}, ikinci sayı {away} için yazılacak.
+- Deplasman favoriyse doğru çıktı şöyle olmalı: 98-112
+- Asla takım sırasını ters çevirme.
 
 GÖREVİN:
 1. 📊 MAÇ ANALİZİ – Nasıl bir maç bekleniyor / gidiyor?
@@ -791,7 +839,7 @@ def show_ai(text,err,p,model_name,sname=None,show_tokens=True):
     # Save to history
     import datetime as dt_module
     st.session_state.analysis_history.append({
-        "time": dt_module.datetime.now(TZ_TR).strftime("%H:%M"),
+        "time": datetime.now(TZ_TR).strftime("%H:%M"),
         "sport": sname,
         "home": p["home"], "away": p["away"],
         "league": p.get("league",""),
@@ -863,33 +911,15 @@ def compare_all_models(prompt,p,_sport_name=""):
                     <div style="font-size:11px;opacity:.7;margin-top:4px">{detail}</div>
                 </div>''', unsafe_allow_html=True)
 
-    # Detaylı analizler - toggle button (checkbox değil, çalışmıyor diye kaldırıldı)
-    import datetime as dt_module
-    det_cmp_key = f"det_cmp_{p['mid']}"
-    if det_cmp_key not in st.session_state:
-        st.session_state[det_cmp_key] = False
-    arrow = "🔽" if st.session_state[det_cmp_key] else "▶️"
-    if st.button(f"{arrow} Detaylı analizleri göster/gizle", key=f"det_cmp_btn_{p['mid']}"):
-        st.session_state[det_cmp_key] = not st.session_state[det_cmp_key]
-    if st.session_state[det_cmp_key]:
-        st.markdown("### 📋 Detaylı Analizler")
-        for model_name,res in results.items():
-            color={"groq":"#EF9F27","gemini":"#22c55e","gpt":"#378ADD","deepseek":"#E24B4A"}.get(AI_MODELS[model_name]["id"],"#888")
-            st.markdown(f"**{model_name}**")
-            if res["err"]:
-                st.error(res["err"])
-            elif res["text"]:
-                tokens=estimate_tokens(res["text"])
-                st.markdown(f'<div class="ai-box" style="border-color:{color}55">{res["text"]}<br><span style="font-size:11px;opacity:.4">~{tokens} token</span></div>',unsafe_allow_html=True)
-            st.markdown("---")
-    
+    # Detaylı analizler butonu kaldırıldı
+
     # Save to history (always)
     for model_name,res in results.items():
         if res.get("text") and not res.get("err"):
             pred=extract_pred(res["text"],_sport_name)
             tokens=estimate_tokens(res["text"])
             st.session_state.analysis_history.append({
-                "time": dt_module.datetime.now(TZ_TR).strftime("%H:%M"),
+                "time": datetime.now(TZ_TR).strftime("%H:%M"),
                 "sport": _sport_name,
                 "home": p["home"], "away": p["away"],
                 "league": p.get("league",""),
@@ -926,7 +956,7 @@ with st.sidebar:
     if key_map.get(mid,""):
         st.success(f"✓ Key mevcut")
     else:
-        st.warning(f"⚠️ .env → {key_var.get(mid,'')}")
+        st.warning(f"⚠️ Streamlit Secrets → {key_var.get(mid,'')}")
 
     st.markdown("---")
     search=st.text_input("🔍 Takım ara","")
@@ -953,7 +983,7 @@ if _new_sport != sport_name:
     st.rerun()
 
 if not API_KEY or "buraya" in API_KEY:
-    st.error("⚠️ `.env` dosyasına `API_SPORTS_KEY` ekle."); st.stop()
+    st.error("⚠️ Streamlit Secrets içine `API_SPORTS_KEY` ekle."); st.stop()
 
 # Country filter (populated after data loads)
 country_filter_key = f"country_filter_{sport_name}"
@@ -1017,25 +1047,17 @@ En az 80 maç listele."""
             if fallback_err:
                 st.error(fallback_err)
             elif fallback_text:
-                import json
                 try:
-                    import json as _json
-                    clean = fallback_text.strip()
-                    # Remove markdown code blocks
-                    for tag in ["```json", "```JSON", "```"]:
-                        clean = clean.replace(tag, "")
-                    clean = clean.strip()
-                    # Find [ ... ] 
-                    start = clean.find("[")
-                    end = clean.rfind("]") + 1
-                    if start >= 0 and end > start:
-                        clean = clean[start:end]
-                    matches = _json.loads(clean)
-                    st.session_state.gemini_fallback[cache_key] = matches
-                    st.rerun()
+                    matches = parse_gemini_match_list(fallback_text)
+                    if matches:
+                        st.session_state.gemini_fallback[cache_key] = matches
+                        st.rerun()
+                    else:
+                        st.error("Gemini yanıtı maç listesine çevrilemedi.")
+                        st.code(fallback_text[:1200])
                 except Exception as _e:
                     st.error(f"Parse hatası: {_e}")
-                    st.code(fallback_text[:800])
+                    st.code(fallback_text[:1200])
     else:
         st.info(f"🌐 Gemini ile çekildi — {len(cached_matches)} maç (cache'den)")
         if st.button("🔄 Yenile", key="gemini_refresh"):
