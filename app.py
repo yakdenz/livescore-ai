@@ -331,20 +331,19 @@ def run_ai(prompt, model_name, use_web_search=False):
 def extract_pred(text, sport):
     """Extract FINAL score prediction only - ignore quarter/set/half scores."""
     if not text: return None
-    big=any(w in sport.lower() for w in ["basket","nba","hokey","hockey","voleybol"])
+    sl = sport.lower()
+    # Sadece basketbol yüksek skor kullanır (2-3 haneli)
+    # Hokey futbol gibi küçük skor (3-2), voleybol set sayısı (3-1)
+    is_basketball = any(w in sl for w in ["basket","nba"])
+    is_volleyball = "voleybol" in sl
 
-    # Search in final-score specific lines first
     final_keywords = ["final tahmin","maç tahmin","tahmin edilen skor","tahmin: ","sonuç tahmin","biteceğ","final skor","🔮","fİnal","fİnAl","tahmin edilen"]
     final_lines = " ".join(l for l in text.split("\n") if any(w in l.lower() for w in final_keywords))
-
-    # Exclude quarter/set/half lines
     exclude_keywords = ["çeyrek","1.çeyrek","set","yarı","periyot","q1","q2","q3","q4"]
 
-    if big:
-        # Basketball/hockey: 2-3 digit scores
+    if is_basketball:
+        # Basketbol: 2-3 haneli skorlar
         pat = r'\b(\d{2,3})\s*[-–]\s*(\d{2,3})\b'
-        # Look in final score lines, excluding small period scores
-        # Also search entire text for "tahmin edilen skor: X-Y" pattern directly
         direct = re.search(r'(?:tahmin edilen skor|tahmin)[:\s]+([0-9]{2,3})\s*[-–]\s*([0-9]{2,3})', text, re.IGNORECASE)
         if direct:
             return f"{direct.group(1)} – {direct.group(2)}"
@@ -383,16 +382,15 @@ def extract_pred(text, sport):
     return None
 
 def extract_sub_pred(text, sport):
-    """Extract half-time prediction for football/basketball/handball only."""
+    """Extract half-time/period prediction."""
     if not text: return {}
     sl = sport.lower()
-    # Voleybol ve diğerleri için sub pred yok
     if any(w in sl for w in ["voleybol","formula","mma","rugby"]): return {}
-    is_tennis = "tenis" in sl
+    is_tennis  = "tenis" in sl
+    is_basket  = any(w in sl for w in ["basket","nba"])
+    is_hockey  = any(w in sl for w in ["hokey","hockey"])
     result = {}
     lines = text.split("\n")
-    is_big = any(w in sl for w in ["basket","nba","hokey","hockey"])
-    is_tennis = "tenis" in sl
     for line in lines:
         ll = line.lower()
         if is_tennis:
@@ -401,11 +399,18 @@ def extract_sub_pred(text, sport):
                 if m:
                     a,b = int(m.group(1)),int(m.group(2))
                     if a<=7 and b<=7: result["1.Set"] = f"{m.group(1)}–{m.group(2)}"
-        elif is_big:
-            # Basketbol/Hokey: 1.Yarı
+        elif is_basket:
+            # Basketbol: 1.Yarı büyük skor (2 haneli)
             if any(w in ll for w in ["1.yarı","ilk yarı","yarı skor","halftime"]):
                 m = re.search(r'(\d{2,3})\s*[-–]\s*(\d{2,3})', line)
                 if m: result["1.Yarı"] = f"{m.group(1)}–{m.group(2)}"
+        elif is_hockey:
+            # Hokey: 1.Periyot küçük skor (0-3 arası)
+            if any(w in ll for w in ["1.periyot","ilk periyot","birinci periyot","1st period"]):
+                m = re.search(r'(\d{1,2})\s*[-–]\s*(\d{1,2})', line)
+                if m:
+                    a,b = int(m.group(1)), int(m.group(2))
+                    if a <= 5 and b <= 5: result["1.Per"] = f"{m.group(1)}–{m.group(2)}"
         else:
             # Futbol/Hentbol: 1.Yarı
             if any(w in ll for w in ["1.yarı","ilk yarı","devre arası","halftime"]):
@@ -420,7 +425,8 @@ def extract_consensus(results_dict, sport):
     """4 modelin tahminlerinden ortak paydaları çıkar."""
     sl = sport.lower()
     is_football = "futbol" in sl
-    is_big = any(w in sl for w in ["basket","nba","hokey","hockey"])
+    is_basketball = any(w in sl for w in ["basket","nba"])
+    is_big = is_basketball  # Sadece basketbol yüksek skor mantığı kullanır
     
     preds = []
     for model_name, res in results_dict.items():
@@ -841,15 +847,20 @@ def compare_all_models(prompt,p,_sport_name=""):
                     <div style="font-size:11px;opacity:.7;margin-top:4px">{detail}</div>
                 </div>''', unsafe_allow_html=True)
 
-    # Detaylı analizler - checkbox ile göster/gizle
+    # Detaylı analizler - toggle button (checkbox değil, çalışmıyor diye kaldırıldı)
     import datetime as dt_module
-    show_details = st.checkbox("📋 Detaylı analizleri göster", key=f"det_{p['mid']}", value=False)
-    if show_details:
+    det_cmp_key = f"det_cmp_{p['mid']}"
+    if det_cmp_key not in st.session_state:
+        st.session_state[det_cmp_key] = False
+    arrow = "🔽" if st.session_state[det_cmp_key] else "▶️"
+    if st.button(f"{arrow} Detaylı analizleri göster/gizle", key=f"det_cmp_btn_{p['mid']}"):
+        st.session_state[det_cmp_key] = not st.session_state[det_cmp_key]
+    if st.session_state[det_cmp_key]:
         st.markdown("### 📋 Detaylı Analizler")
         for model_name,res in results.items():
             color={"groq":"#EF9F27","gemini":"#22c55e","gpt":"#378ADD","deepseek":"#E24B4A"}.get(AI_MODELS[model_name]["id"],"#888")
             st.markdown(f"**{model_name}**")
-            if res["err"]: 
+            if res["err"]:
                 st.error(res["err"])
             elif res["text"]:
                 tokens=estimate_tokens(res["text"])
@@ -1098,8 +1109,12 @@ En az 80 maç listele."""
                             sub_html = "".join([f'<div style="font-size:11px;opacity:.7">{k}: {v}</div>' for k,v in sub.items()]) if sub else ""
                             if pred:
                                 st.markdown(f'<div class="pred-box"><div class="pred-label">🔮 TAHMİN</div><div class="pred-score">{pred}</div><div class="pred-label">{home} – {away}</div>{sub_html}</div>', unsafe_allow_html=True)
-                            show_det = st.checkbox("📋 Detayı gör", key=f"det_fake_{i}")
-                            if show_det:
+                            det_k = f"det_gem_{i}"
+                            if det_k not in st.session_state: st.session_state[det_k] = False
+                            a2 = "🔽" if st.session_state[det_k] else "▶️"
+                            if st.button(f"{a2} Analizi göster/gizle", key=f"det_gem_btn_{i}"):
+                                st.session_state[det_k] = not st.session_state[det_k]
+                            if st.session_state[det_k]:
                                 st.markdown(f'<div class="ai-box">{text}</div>', unsafe_allow_html=True)
                         elif err: st.error(err)
                     else:
