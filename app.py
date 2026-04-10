@@ -18,26 +18,34 @@ st.set_page_config(page_title="Canlı Skor + AI", page_icon="⚽", layout="wide"
 
 st.markdown("""
 <style>
-.team-name{font-size:15px;font-weight:600}
-.score-box{font-size:24px;font-weight:bold;text-align:center}
-.status-live{color:#ff4444;font-size:12px;font-weight:bold}
-.status-finished{color:#888;font-size:12px}
-.status-upcoming{color:#3b82f6;font-size:12px}
-.ai-box{border:1px solid rgba(102,126,234,.35);border-radius:10px;padding:14px;margin-top:8px;
-        background:rgba(102,126,234,.05);line-height:1.8}
+.team-name{font-size:14px;font-weight:600}
+.score-box{font-size:22px;font-weight:bold;text-align:center}
+.status-live{color:#ff4444;font-size:11px;font-weight:bold}
+.status-finished{color:#888;font-size:11px}
+.status-upcoming{color:#3b82f6;font-size:11px}
+.ai-box{border:1px solid rgba(102,126,234,.35);border-radius:10px;padding:12px;margin-top:8px;
+        background:rgba(102,126,234,.05);line-height:1.7;font-size:14px}
 .pred-box{border:2px solid #22c55e;border-radius:10px;padding:10px;margin:8px 0;
           background:rgba(34,197,94,.07);text-align:center}
-.pred-score{font-size:28px;font-weight:900;color:#16a34a;letter-spacing:2px}
+.pred-score{font-size:26px;font-weight:900;color:#16a34a;letter-spacing:1px}
 .pred-label{font-size:11px;color:#16a34a;opacity:.8}
 .bulk-result{border:1px solid rgba(234,179,8,.4);border-radius:8px;padding:10px;
              margin:6px 0;background:rgba(234,179,8,.05);font-size:13px;line-height:1.6}
-.divider{border-top:1px solid rgba(128,128,128,.12);margin:10px 0}
+.divider{border-top:1px solid rgba(128,128,128,.12);margin:8px 0}
 .cache-info{font-size:11px;color:var(--color-text-tertiary);margin-top:4px}
 .model-badge{display:inline-block;font-size:10px;padding:1px 6px;border-radius:10px;margin-left:6px;vertical-align:middle}
 .mb-groq{background:#FAEEDA;color:#633806}
 .mb-gemini{background:#EAF3DE;color:#27500A}
 .mb-claude{background:#EEEDFE;color:#3C3489}
 .mb-gpt{background:#E6F1FB;color:#0C447C}
+.news-box{background:rgba(59,130,246,.06);border:1px solid rgba(59,130,246,.2);
+          border-radius:8px;padding:10px;margin:6px 0;font-size:13px;line-height:1.6}
+@media(max-width:768px){
+  .team-name{font-size:13px}
+  .score-box{font-size:20px}
+  .pred-score{font-size:22px}
+  .ai-box{font-size:13px;padding:10px}
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -201,10 +209,14 @@ def call_gemini(prompt, use_search=False):
         from google.genai import types
         client = genai.Client(api_key=GEMINI_KEY)
         if use_search:
-            search_tool = types.Tool(google_search=types.GoogleSearch())
-            config = types.GenerateContentConfig(tools=[search_tool])
-            r = client.models.generate_content(
-                model="gemini-2.5-flash", contents=prompt, config=config)
+            try:
+                search_tool = types.Tool(google_search=types.GoogleSearch())
+                config = types.GenerateContentConfig(tools=[search_tool])
+                r = client.models.generate_content(
+                    model="gemini-2.5-flash", contents=prompt, config=config)
+            except Exception:
+                # Fallback without search if search fails
+                r = client.models.generate_content(model="gemini-2.5-flash", contents=prompt)
         else:
             r = client.models.generate_content(model="gemini-2.5-flash", contents=prompt)
         return r.text, None
@@ -896,10 +908,15 @@ Yanıt SADECE şu JSON formatında olsun, başka metin olmasın:
                     p_fake = {"home":home,"away":away,"league":league,"mid":mid_fake,"sh":"NS"}
                     prompt = generic_prompt(sport_name, home, away, "Başlamadı", league)
                     if use_ws_gem and GEMINI_KEY:
-                        with st.spinner("🌐 Gemini haber arıyor..."):
-                            news_t, _ = call_gemini(f"{home} vs {away} maçı hakkında güncel bilgi, sakat oyuncular. Türkçe 3 madde.", use_search=True)
+                        news_key_g = f"news_gem_{i}"
+                        if news_key_g not in st.session_state:
+                            with st.spinner("🌐 Güncel haberler..."):
+                                news_t, _ = call_gemini(f"{home} vs {away}: güncel sakatlıklar ve haberler. Türkçe 3 madde.", use_search=True)
+                            st.session_state[news_key_g] = news_t or ""
+                        news_t = st.session_state.get(news_key_g, "")
                         if news_t:
-                            st.info(f"🌐 {news_t}")
+                            with st.expander("🌐 Güncel Haberler"):
+                                st.markdown(f'<div class="news-box">{news_t}</div>', unsafe_allow_html=True)
                             prompt = prompt + f"\n\nGÜNCEL:\n{news_t}"
                     if do_s:
                         with st.spinner("Analiz yapılıyor..."):
@@ -1052,14 +1069,19 @@ def match_card(p,raw_list):
                         prompt = football_prompt(raw,sd,ed,hf,af,hs,as_,inj_h,inj_a,h2h,stand,pred) if raw else \
                                  generic_prompt(sport_name,p["home"],p["away"],p["status_txt"],p["league"])
 
-                    # Gemini web araması yapılacaksa önce haber çek, prompta ekle
+                    # Gemini web araması - otomatik, sonuç expander'da
                     if use_ws and GEMINI_KEY:
-                        with st.spinner("🌐 Gemini güncel haberler arıyor..."):
-                            news_prompt = f"{p['home']} vs {p['away']} maçı hakkında güncel haberler, sakat oyuncular ve son gelişmeleri Türkçe özetle. Maksimum 3 madde."
-                            news_text, news_err = call_gemini(news_prompt, use_search=True)
-                        if news_text and not news_err:
-                            st.info(f"🌐 **Güncel Haberler:** {news_text}")
-                            prompt = prompt + f"\n\nGÜNCEL HABERLER (Gemini web araması):\n{news_text}"
+                        news_key = f"news_{p['mid']}"
+                        if news_key not in st.session_state:
+                            with st.spinner("🌐 Güncel haberler çekiliyor..."):
+                                news_prompt = f"{p['home']} vs {p['away']} maçı: güncel sakatlıklar, form ve son haberler. Türkçe 3 madde."
+                                news_text, news_err = call_gemini(news_prompt, use_search=True)
+                            st.session_state[news_key] = news_text or ""
+                        news_text = st.session_state.get(news_key, "")
+                        if news_text:
+                            with st.expander("🌐 Güncel Haberler (Gemini)"):
+                                st.markdown(f'<div class="news-box">{news_text}</div>', unsafe_allow_html=True)
+                            prompt = prompt + f"\n\nGÜNCEL HABERLER:\n{news_text}"
 
                     if do_single:
                         text,err=run_ai(prompt,ai_model)
@@ -1095,12 +1117,17 @@ def match_card(p,raw_list):
                 if do_single2 or do_compare2:
                     prompt=generic_prompt(sport_name,p["home"],p["away"],p["status_txt"],p["league"])
                     if use_ws2 and GEMINI_KEY:
-                        with st.spinner("🌐 Gemini güncel haberler arıyor..."):
-                            news_prompt = f"{p['home']} vs {p['away']} ({sport_name}) maçı hakkında güncel haberler, sakat oyuncular ve son gelişmeleri Türkçe özetle. Maksimum 3 madde."
-                            news_text, news_err = call_gemini(news_prompt, use_search=True)
-                        if news_text and not news_err:
-                            st.info(f"🌐 **Güncel Haberler:** {news_text}")
-                            prompt = prompt + f"\n\nGÜNCEL HABERLER (Gemini web araması):\n{news_text}"
+                        news_key2 = f"news_{mk}"
+                        if news_key2 not in st.session_state:
+                            with st.spinner("🌐 Güncel haberler çekiliyor..."):
+                                news_prompt = f"{p['home']} vs {p['away']} ({sport_name}): güncel sakatlıklar ve son haberler. Türkçe 3 madde."
+                                news_text, news_err = call_gemini(news_prompt, use_search=True)
+                            st.session_state[news_key2] = news_text or ""
+                        news_text = st.session_state.get(news_key2, "")
+                        if news_text:
+                            with st.expander("🌐 Güncel Haberler"):
+                                st.markdown(f'<div class="news-box">{news_text}</div>', unsafe_allow_html=True)
+                            prompt = prompt + f"\n\nGÜNCEL HABERLER:\n{news_text}"
                     if do_single2:
                         with st.spinner("AI analiz yapıyor..."): text,err=run_ai(prompt,ai_model)
                         show_ai(text,err,p,ai_model,sname=sport_name)
