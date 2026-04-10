@@ -841,22 +841,24 @@ with st.sidebar:
         st.rerun()
     st.caption("API-Sports ücretsiz\n100 istek/gün/branş")
 
-# ── HEADER + HORIZONTAL SPORT SELECTOR ──────────────────────────
+# ── BRANŞ SEÇİCİ (yatay radio) ───────────────────────────────────
 sport_list = list(SPORT_CONFIG.keys())
+# Short display names for radio
+sport_display = []
+for s in sport_list:
+    words = s.split()
+    short = words[-1] if len(words) > 1 else s  # last word: Futbol, Basketbol, Tenis...
+    sport_display.append(f"{SPORT_CONFIG[s]['emoji']} {short}")
 
-# Horizontal emoji sport buttons
-_cols = st.columns(len(sport_list))
-for _i, _sn in enumerate(sport_list):
-    with _cols[_i]:
-        _scfg = SPORT_CONFIG[_sn]
-        _is_active = _sn == sport_name
-        if st.button(_scfg["emoji"], key=f"spbtn_{_sn}", 
-                     help=_sn, use_container_width=True,
-                     type="primary" if _is_active else "secondary"):
-            st.session_state.sport_name = _sn
-            st.rerun()
+sel_idx = sport_list.index(sport_name) if sport_name in sport_list else 0
+chosen = st.radio("", sport_display, index=sel_idx, horizontal=True, 
+                  label_visibility="collapsed", key="sport_radio")
+chosen_sport = sport_list[sport_display.index(chosen)]
+if chosen_sport != sport_name:
+    st.session_state.sport_name = chosen_sport
+    st.rerun()
 
-st.markdown(f'<p style="font-size:15px;font-weight:600;margin:4px 0 6px">{cfg["emoji"]} {sport_name} <span style="font-size:11px;opacity:.5;font-weight:400">{sel_date.strftime("%d %b")} · {ai_model.split()[1] if len(ai_model.split())>1 else ai_model.split()[0]}</span></p>', unsafe_allow_html=True)
+st.caption(f"{sel_date.strftime('%d %B %Y')} · {ai_model.split()[1] if len(ai_model.split())>1 else ai_model.split()[0]}")
 
 if not API_KEY or "buraya" in API_KEY:
     st.error("⚠️ `.env` dosyasına `API_SPORTS_KEY` ekle."); st.stop()
