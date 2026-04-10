@@ -3,6 +3,7 @@ import requests
 import os
 from dotenv import load_dotenv
 from datetime import datetime, date, timezone, timedelta
+import datetime as dt_module
 import time
 import re
 
@@ -259,7 +260,7 @@ def fetch_predictions(fid):
 
 # ── AI ────────────────────────────────────────────────────────────
 def call_groq(prompt):
-    if not GROQ_KEY: return None,"⚠️ Groq key bulunamadı (Streamlit Secrets → GROQ_API_KEY)"
+    if not GROQ_KEY: return None,"⚠️ Groq key bulunamadı (.env → GROQ_API_KEY)"
     try:
         from groq import Groq
         r=Groq(api_key=GROQ_KEY).chat.completions.create(
@@ -271,7 +272,7 @@ def call_groq(prompt):
         return None,f"Groq hatası: {e}"
 
 def call_gemini(prompt, use_search=False):
-    if not GEMINI_KEY: return None,"⚠️ Gemini key bulunamadı (Streamlit Secrets → GEMINI_API_KEY)"
+    if not GEMINI_KEY: return None,"⚠️ Gemini key bulunamadı (.env → GEMINI_API_KEY)"
     try:
         from google import genai
         client = genai.Client(api_key=GEMINI_KEY)
@@ -297,7 +298,7 @@ def call_gemini(prompt, use_search=False):
         return None,f"Gemini hatası: {err[:200]}"
 
 def call_deepseek(prompt):
-    if not DEEPSEEK_KEY: return None,"⚠️ DeepSeek key bulunamadı (Streamlit Secrets → DEEPSEEK_API_KEY)"
+    if not DEEPSEEK_KEY: return None,"⚠️ DeepSeek key bulunamadı (.env → DEEPSEEK_API_KEY)"
     try:
         from openai import OpenAI
         r=OpenAI(api_key=DEEPSEEK_KEY,base_url="https://api.deepseek.com").chat.completions.create(
@@ -309,7 +310,7 @@ def call_deepseek(prompt):
         return None,f"DeepSeek hatası: {e}"
 
 def call_gpt(prompt):
-    if not OPENAI_KEY: return None,"⚠️ OpenAI key bulunamadı (Streamlit Secrets → OPENAI_API_KEY)"
+    if not OPENAI_KEY: return None,"⚠️ OpenAI key bulunamadı (.env → OPENAI_API_KEY)"
     try:
         from openai import OpenAI
         r=OpenAI(api_key=OPENAI_KEY).chat.completions.create(
@@ -328,51 +329,6 @@ def run_ai(prompt, model_name, use_web_search=False):
     if mid=="gpt":      return call_gpt(prompt)
     return None,"Model bulunamadı"
 
-
-def parse_gemini_match_list(raw_text):
-    import json as _json
-    clean = (raw_text or "").strip()
-    if not clean:
-        return []
-    for tag in ["```json", "```JSON", "```Json", "```"]:
-        clean = clean.replace(tag, "")
-    clean = clean.strip()
-
-    # First try direct JSON array/object extraction
-    candidates = []
-    start_arr = clean.find("[")
-    end_arr = clean.rfind("]") + 1
-    if start_arr >= 0 and end_arr > start_arr:
-        candidates.append(clean[start_arr:end_arr])
-
-    start_obj = clean.find("{")
-    end_obj = clean.rfind("}") + 1
-    if start_obj >= 0 and end_obj > start_obj:
-        candidates.append(clean[start_obj:end_obj])
-
-    for cand in candidates:
-        try:
-            data = _json.loads(cand)
-            if isinstance(data, list):
-                return data
-            if isinstance(data, dict):
-                for k in ["matches", "games", "fixtures", "response", "items", "data"]:
-                    v = data.get(k)
-                    if isinstance(v, list):
-                        return v
-        except:
-            pass
-
-    # Last resort: try line-based object recovery
-    matches = re.findall(r'\{[^{}]+"home"[^{}]+"away"[^{}]+\}', clean, re.DOTALL)
-    out = []
-    for m in matches:
-        try:
-            out.append(_json.loads(m))
-        except:
-            pass
-    return out
-
 def extract_pred(text, sport):
     """Extract FINAL score prediction only - ignore quarter/set/half scores."""
     if not text: return None
@@ -389,7 +345,7 @@ def extract_pred(text, sport):
     if is_basketball:
         # Basketbol: 2-3 haneli skorlar
         pat = r'\b(\d{2,3})\s*[-–]\s*(\d{2,3})\b'
-        direct = re.search(r'(?:tahmin edilen skor|final tahmin|final skor|maç tahmini|tahmin)[:\s]+([0-9]{2,3})\s*[-–]\s*([0-9]{2,3})', text, re.IGNORECASE)
+        direct = re.search(r'(?:tahmin edilen skor|tahmin)[:\s]+([0-9]{2,3})\s*[-–]\s*([0-9]{2,3})', text, re.IGNORECASE)
         if direct:
             return f"{direct.group(1)} – {direct.group(2)}"
         for src in [final_lines, text]:
@@ -404,7 +360,7 @@ def extract_pred(text, sport):
                 return f"{a} – {b}"
     else:
         # Direct pattern search first
-        direct = re.search(r'(?:tahmin edilen skor|final tahmin|final skor|maç tahmini|tahmin)[:\s]+([0-9]{1,2})\s*[-–]\s*([0-9]{1,2})', text, re.IGNORECASE)
+        direct = re.search(r'(?:tahmin edilen skor|tahmin)[:\s]+([0-9]{1,2})\s*[-–]\s*([0-9]{1,2})', text, re.IGNORECASE)
         if direct:
             return f"{direct.group(1)} – {direct.group(2)}"
         is_set_sport = any(w in sport.lower() for w in ["voleybol","hentbol","rugby"])
@@ -628,11 +584,6 @@ SEZON: {season_str(hs,home)} / {season_str(as_,away)}
 {sb}
 {eb}
 
-ÇOK ÖNEMLİ:
-- Skor formatı HER ZAMAN Ev Sahibi - Deplasman olacak.
-- İlk sayı {home}, ikinci sayı {away} içindir.
-- Deplasman favori olsa bile sıra değişmeyecek.
-
 GÖREVİN:
 1. 📊 MAÇ ANALİZİ – Hangi takım üstün, neden?
 2. 🔮 TAHMİN – Kesin final skoru. MUTLAKA yaz: "Tahmin edilen skor: X-Y"
@@ -640,8 +591,6 @@ GÖREVİN:
 4. 💡 EK BİLGİ – Derbi, puan durumu, sakatlık, haber
 
 5. 🔮 1.YARI TAHMİNİ – İlk yarı skoru (örn: 1-0)
-
-Mutlaka skor verirken Ev Sahibi - Deplasman formatını koru.
 
 6-8 cümle. Özgüvenli yaz."""
 
@@ -690,20 +639,13 @@ def generic_prompt(sport_name,home,away,status,league):
 
     return f"""Sen profesyonel bir {sport_name} analisti ve bahis danışmanısın. Türkçe, özgüvenli yaz.
 
-MAÇ: {league} | EV SAHİBİ: {home} | DEPLASMAN: {away} | Durum: {status}
-
-ÇOK ÖNEMLİ:
-- Skor formatı HER ZAMAN Ev Sahibi - Deplasman olacak.
-- Yani ilk sayı {home}, ikinci sayı {away} için yazılacak.
-- Deplasman favoriyse doğru çıktı şöyle olmalı: 98-112
-- Asla takım sırasını ters çevirme.
+MAÇ: {league} | {home} vs {away} | Durum: {status}
 
 GÖREVİN:
 1. 📊 MAÇ ANALİZİ – Nasıl bir maç bekleniyor / gidiyor?
 2. 💡 EK BİLGİ – Bu takımlar hakkında önemli bilgi
 {detail}
 
-Mutlaka skor verirken Ev Sahibi - Deplasman formatını koru.
 5-7 cümle. Özgüvenli, kesin ve net yaz."""
 
 def bulk_prompt(matches_info,sport_name):
@@ -713,11 +655,6 @@ def bulk_prompt(matches_info,sport_name):
     lines=[f"{i}. {m['home']} vs {m['away']} ({m['league']}) | {m['status']}" for i,m in enumerate(matches_info,1)]
     return f"""Sen profesyonel bir {sport_name} analisti ve bahis danışmanısın.
 Her maç için Türkçe kısa tahmin yaz.
-
-ÇOK ÖNEMLİ:
-- Her skor HER ZAMAN Ev Sahibi - Deplasman formatında olacak.
-- İlk sayı soldaki takım, ikinci sayı sağdaki takım içindir.
-- Deplasman favori olsa bile takım sırası değişmeyecek.
 
 MAÇLAR:
 {NL.join(lines)}
@@ -837,9 +774,9 @@ def show_ai(text,err,p,model_name,sname=None,show_tokens=True):
     token_info=f' <span style="font-size:11px;opacity:.5">~{tokens} token</span>' if show_tokens else ""
     st.markdown(f'<div class="ai-box">🤖 <b>{model_name}</b>{token_info}<br><br>{text}</div>',unsafe_allow_html=True)
     # Save to history
-    import datetime as dt_module
+
     st.session_state.analysis_history.append({
-        "time": datetime.now(TZ_TR).strftime("%H:%M"),
+        "time": dt_module.datetime.now(TZ_TR).strftime("%H:%M"),
         "sport": sname,
         "home": p["home"], "away": p["away"],
         "league": p.get("league",""),
@@ -911,15 +848,14 @@ def compare_all_models(prompt,p,_sport_name=""):
                     <div style="font-size:11px;opacity:.7;margin-top:4px">{detail}</div>
                 </div>''', unsafe_allow_html=True)
 
-    # Detaylı analizler butonu kaldırıldı
-
     # Save to history (always)
+
     for model_name,res in results.items():
         if res.get("text") and not res.get("err"):
             pred=extract_pred(res["text"],_sport_name)
             tokens=estimate_tokens(res["text"])
             st.session_state.analysis_history.append({
-                "time": datetime.now(TZ_TR).strftime("%H:%M"),
+                "time": dt_module.datetime.now(TZ_TR).strftime("%H:%M"),
                 "sport": _sport_name,
                 "home": p["home"], "away": p["away"],
                 "league": p.get("league",""),
@@ -956,7 +892,7 @@ with st.sidebar:
     if key_map.get(mid,""):
         st.success(f"✓ Key mevcut")
     else:
-        st.warning(f"⚠️ Streamlit Secrets → {key_var.get(mid,'')}")
+        st.warning(f"⚠️ .env → {key_var.get(mid,'')}")
 
     st.markdown("---")
     search=st.text_input("🔍 Takım ara","")
@@ -983,7 +919,7 @@ if _new_sport != sport_name:
     st.rerun()
 
 if not API_KEY or "buraya" in API_KEY:
-    st.error("⚠️ Streamlit Secrets içine `API_SPORTS_KEY` ekle."); st.stop()
+    st.error("⚠️ `.env` dosyasına `API_SPORTS_KEY` ekle."); st.stop()
 
 # Country filter (populated after data loads)
 country_filter_key = f"country_filter_{sport_name}"
@@ -1047,17 +983,25 @@ En az 80 maç listele."""
             if fallback_err:
                 st.error(fallback_err)
             elif fallback_text:
+                import json
                 try:
-                    matches = parse_gemini_match_list(fallback_text)
-                    if matches:
-                        st.session_state.gemini_fallback[cache_key] = matches
-                        st.rerun()
-                    else:
-                        st.error("Gemini yanıtı maç listesine çevrilemedi.")
-                        st.code(fallback_text[:1200])
+                    import json as _json
+                    clean = fallback_text.strip()
+                    # Remove markdown code blocks
+                    for tag in ["```json", "```JSON", "```"]:
+                        clean = clean.replace(tag, "")
+                    clean = clean.strip()
+                    # Find [ ... ] 
+                    start = clean.find("[")
+                    end = clean.rfind("]") + 1
+                    if start >= 0 and end > start:
+                        clean = clean[start:end]
+                    matches = _json.loads(clean)
+                    st.session_state.gemini_fallback[cache_key] = matches
+                    st.rerun()
                 except Exception as _e:
                     st.error(f"Parse hatası: {_e}")
-                    st.code(fallback_text[:1200])
+                    st.code(fallback_text[:800])
     else:
         st.info(f"🌐 Gemini ile çekildi — {len(cached_matches)} maç (cache'den)")
         if st.button("🔄 Yenile", key="gemini_refresh"):
@@ -1147,13 +1091,7 @@ En az 80 maç listele."""
                             sub_html = "".join([f'<div style="font-size:11px;opacity:.7">{k}: {v}</div>' for k,v in sub.items()]) if sub else ""
                             if pred:
                                 st.markdown(f'<div class="pred-box"><div class="pred-label">🔮 TAHMİN</div><div class="pred-score">{pred}</div><div class="pred-label">{home} – {away}</div>{sub_html}</div>', unsafe_allow_html=True)
-                            det_k = f"det_gem_{i}"
-                            if det_k not in st.session_state: st.session_state[det_k] = False
-                            a2 = "🔽" if st.session_state[det_k] else "▶️"
-                            if st.button(f"{a2} Analizi göster/gizle", key=f"det_gem_btn_{i}"):
-                                st.session_state[det_k] = not st.session_state[det_k]
-                            if st.session_state[det_k]:
-                                st.markdown(f'<div class="ai-box">{text}</div>', unsafe_allow_html=True)
+                            st.markdown(f'<div class="ai-box">{text}</div>', unsafe_allow_html=True)
                         elif err: st.error(err)
                     else:
                         compare_all_models(prompt, p_fake, _sport_name=sport_name)
@@ -1365,15 +1303,8 @@ def match_card(p,raw_list):
                 st.session_state[qtype_key] = "compare"
                 compare_all_models(q_prompt, p, _sport_name=sport_name)
 
-    # ── Detaylar toggle (expander yerine — kapanma sorunu YOK) ──
-    det_exp_key = f"det_exp_{mk}"
-    if det_exp_key not in st.session_state:
-        st.session_state[det_exp_key] = False
-    if st.button(f"{'🔽' if st.session_state[det_exp_key] else '▶️'} Detaylar & Tekli AI Tahmini", key=f"det_toggle_{mk}"):
-        st.session_state[det_exp_key] = not st.session_state[det_exp_key]
-
-    if st.session_state[det_exp_key]:
-        if is_football:
+    # ── Detaylar (her zaman açık, toggle kaldırıldı) ──
+    if is_football:
             t1,t2,t3=st.tabs(["📈 İstatistikler","⚡ Olaylar","🤖 AI Tahmini"])
             with t1:
                 if p["sh"]=="NS": st.info("Maç başlamadı.")
@@ -1409,7 +1340,6 @@ def match_card(p,raw_list):
                 btn1,btn2=st.columns(2)
                 with btn1: do_single=st.button("🤖 Seçili Model",key=f"ai_{mk}")
                 with btn2: do_compare=st.button("⚡ Tüm Modeller Karşılaştır",key=f"cmp_{mk}")
-                # Web search - her zaman görünür, Gemini bilgileri diğer modellere de aktarılır
                 use_ws = st.checkbox("🌐 Gemini ile güncel haber/sakat bilgisi çek (tüm modeller kullanır)", key=f"ws_{mk}", value=False)
 
                 if do_single or do_compare:
@@ -1429,7 +1359,6 @@ def match_card(p,raw_list):
                         prompt = football_prompt(raw,sd,ed,hf,af,hs,as_,inj_h,inj_a,h2h,stand,pred) if raw else \
                                  generic_prompt(sport_name,p["home"],p["away"],p["status_txt"],p["league"])
 
-                    # Gemini web araması - otomatik, sonuç expander'da
                     if use_ws and GEMINI_KEY:
                         news_key = f"news_{p['mid']}"
                         if news_key not in st.session_state:
@@ -1447,7 +1376,7 @@ def match_card(p,raw_list):
                         show_ai(text,err,p,ai_model,sname=sport_name)
                     else:
                         compare_all_models(prompt,p,_sport_name=sport_name)
-        else:
+    else:
             t1,t2=st.tabs(["📋 Bilgi","🤖 AI Tahmini"])
             with t1:
                 raw=p.get("raw",{})
