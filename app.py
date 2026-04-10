@@ -391,7 +391,8 @@ def extract_consensus(results_dict, sport):
     elif is_big:
         avg_h = sum(scores_h)/len(scores_h)
         avg_a = sum(scores_a)/len(scores_a)
-        consensus["skor_ort"] = ("📊 Ortalama", f"Ev {avg_h:.0f} – Dep {avg_a:.0f} (ort tahmin)")
+        avg_total = avg_h + avg_a
+        consensus["skor_ort"] = ("📊 Ortalama Skor", f"Ev {avg_h:.0f} – Dep {avg_a:.0f} | Toplam: {avg_total:.0f} sayı")
         # Handikap
         spreads = [h-a for h,a,_,_ in preds]
         avg_spread = sum(spreads)/len(spreads)
@@ -663,16 +664,9 @@ def show_ai(text,err,p,model_name,sname=None,show_tokens=True):
     pred=extract_pred(text,sname)
     sub_pred = extract_sub_pred(text, sname)
     if pred:
-        sub_html = ""
-        if sub_pred:
-            items = "  ".join([f'<span style="font-size:12px;background:rgba(34,197,94,.15);padding:2px 8px;border-radius:8px;margin:2px">{k}: <b>{v}</b></span>' for k,v in sub_pred.items()])
-            sub_html = f'<div style="margin-top:6px">{items}</div>'
-        st.markdown(f"""<div class="pred-box">
-            <div class="pred-label">🔮 TAHMİN EDİLEN SKOR</div>
-            <div class="pred-score">{pred}</div>
-            <div class="pred-label">{p['home']} – {p['away']}</div>
-            {sub_html}
-        </div>""",unsafe_allow_html=True)
+        sub_items = "".join([f'<span style="font-size:12px;background:rgba(34,197,94,.15);padding:2px 8px;border-radius:8px;margin:2px">{k}: <b>{v}</b></span>' for k,v in sub_pred.items()]) if sub_pred else ""
+        sub_div = f'<div style="margin-top:6px">{sub_items}</div>' if sub_items else ""
+        st.markdown(f'<div class="pred-box"><div class="pred-label">🔮 TAHMİN EDİLEN SKOR</div><div class="pred-score">{pred}</div><div class="pred-label">{p["home"]} – {p["away"]}</div>{sub_div}</div>', unsafe_allow_html=True)
     tokens=estimate_tokens(text)
     token_info=f' <span style="font-size:11px;opacity:.5">~{tokens} token</span>' if show_tokens else ""
     st.markdown(f'<div class="ai-box">🤖 <b>{model_name}</b>{token_info}<br><br>{text}</div>',unsafe_allow_html=True)
@@ -711,15 +705,9 @@ def compare_all_models(prompt,p,_sport_name=""):
             sub=extract_sub_pred(res["text"],_sport_name) if res["text"] else {}
             color={"groq":"#EF9F27","gemini":"#22c55e","gpt":"#378ADD","deepseek":"#E24B4A"}.get(AI_MODELS[model_name]["id"],"#888")
             short_name=" ".join(model_name.split()[:2])
-            sub_html=""
-            if sub:
-                sub_html="".join([f'<div style="font-size:11px;color:{color};opacity:.8;margin-top:2px">{k}: <b>{v}</b></div>' for k,v in sub.items() if k and v])
+            sub_lines = "".join([f'<div style="font-size:11px;color:{color};opacity:.8;margin-top:2px">{k}: <b>{v}</b></div>' for k,v in sub.items() if k and v]) if sub else ""
             if pred:
-                st.markdown(f"""<div style="border:2px solid {color};border-radius:10px;padding:10px;text-align:center;margin-bottom:8px">
-                    <div style="font-size:10px;opacity:.6;margin-bottom:2px">{short_name}</div>
-                    <div style="font-size:24px;font-weight:900;color:{color}">{pred}</div>
-                    {sub_html}
-                </div>""",unsafe_allow_html=True)
+                st.markdown(f'<div style="border:2px solid {color};border-radius:10px;padding:10px;text-align:center;margin-bottom:8px"><div style="font-size:10px;opacity:.6;margin-bottom:2px">{short_name}</div><div style="font-size:24px;font-weight:900;color:{color}">{pred}</div>{sub_lines}</div>', unsafe_allow_html=True)
             elif res["err"]:
                 st.markdown(f"""<div style="border:1px solid #888;border-radius:10px;padding:10px;text-align:center">
                     <div style="font-size:10px;opacity:.6">{short_name}</div>
@@ -822,6 +810,30 @@ if not API_KEY or "buraya" in API_KEY:
 # ── VERİ: MAÇ ÖNCESİ (günlük cache) ─────────────────────────────
 with st.spinner("Maç öncesi liste yükleniyor..."):
     pre_raw, cache_ts = fetch_prematch_cached(cfg["key"],cfg["base"],date_str,API_KEY)
+
+# Gemini fallback if no matches found
+if not pre_raw and GEMINI_KEY:
+    st.warning(f"⚠️ API'den {sport_name} maçı gelmedi (limit dolmuş olabilir). Gemini ile maç listesi çekebilirsiniz.")
+    if st.button(f"🌐 Gemini ile Bugünkü {sport_name} Maçlarını Çek", key="gemini_fallback"):
+        with st.spinner("Gemini maç listesi arıyor..."):
+            fallback_prompt = f"""{date_str} tarihindeki {sport_name} maçlarını listele. Tüm ligler dahil (majör ve minör).
+Her maç için: Lig adı | Ev takımı vs Deplasman takımı | Saat (varsa)
+Türkçe yaz. Sadece liste, yorum yok."""
+            fallback_text, fallback_err = call_gemini(fallback_prompt, use_search=True)
+        if fallback_text and not fallback_err:
+            st.info(f"🌐 **Gemini Maç Listesi:**\n\n{fallback_text}")
+            # AI tahmin butonu
+            if st.button("🤖 Bu Maçlar İçin Tahmin Al"):
+                tahmin_p = f"""Aşağıdaki {sport_name} maçları için kısa tahminler:
+{fallback_text}
+
+Her maç için: 🏆 [Ev] vs [Dep] → Tahmin edilen skor: X-Y | [1 cümle gerekçe]"""
+                with st.spinner("Tahminler yapılıyor..."):
+                    text, err = run_ai(tahmin_p, ai_model)
+                    if text and not err:
+                        st.markdown(f'<div class="ai-box">{text}</div>', unsafe_allow_html=True)
+        elif fallback_err:
+            st.error(fallback_err)
 
 if cache_ts:
     st.markdown(f'<span class="cache-info">📦 Maç öncesi liste bugün {cache_ts}\'de çekildi — gün boyunca sabit kalır</span>', unsafe_allow_html=True)
