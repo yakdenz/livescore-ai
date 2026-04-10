@@ -142,6 +142,14 @@ for k,v in [("bulk_results",{}),("selected",set()),("live_loaded",False),("live_
 if not isinstance(st.session_state.gemini_fallback, dict):
     st.session_state.gemini_fallback = {}
 
+
+def mobile_columns(spec):
+    """
+    Fallback helper. Returns normal Streamlit columns.
+    Keeps the rest of the code working on mobile without NameError.
+    """
+    return st.columns(spec)
+
 # ── HELPERS ───────────────────────────────────────────────────────
 def get_sh(m, sk):
     if sk=="football": return m["fixture"]["status"]["short"]
