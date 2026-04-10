@@ -845,14 +845,33 @@ if not pre_raw and GEMINI_KEY:
         st.warning(f"⚠️ API'den {sport_name} maçı gelmedi. Gemini ile çekebilirsiniz.")
         if st.button(f"🌐 Gemini ile Bugünkü {sport_name} Maçlarını Çek", key="gemini_fallback_btn"):
             with st.spinner("Gemini maç listesi arıyor..."):
-                fallback_prompt = f"""{date_str} tarihindeki {sport_name} maçlarını JSON listele.
-TÜM ligleri dahil et: Süper Lig, Premier League, La Liga, Serie A, Bundesliga, Ligue 1, Champions League, Europa League, Conference League, Championship, Serie B, 2.Bundesliga, Eredivisie, Primeira Liga, Süper Lig, MLS, Brasileirao, Argentine Primera, Jupiler Pro, Super Lig Türkiye, Ukrainian Premier, Russian Premier, Czech Liga, Polish Ekstraklasa, Swiss SL, Belgian Pro, Scottish Prem, Norwegian Eliteserien, Danish Superliga, Swedish Allsvenskan, ve diğer tüm ligler.
-En az 50-100 maç listele. 
-Yanıt SADECE JSON array olsun, başka metin YOK:
+                fallback_prompt = f"""{date_str} tarihindeki TÜM {sport_name} maçlarını JSON formatında listele.
+MUTLAKA şu ligleri dahil et (eksiksiz):
+- Türkiye: Süper Lig, 1.Lig, 2.Lig
+- İngiltere: Premier League, Championship, League One
+- İspanya: La Liga, La Liga 2
+- İtalya: Serie A, Serie B
+- Almanya: Bundesliga, 2.Bundesliga
+- Fransa: Ligue 1, Ligue 2
+- Hollanda: Eredivisie
+- Portekiz: Primeira Liga
+- Belçika: Jupiler Pro League
+- İskoçya: Scottish Premiership
+- Yunanistan: Super League
+- Çek Cumhuriyeti: Czech Liga
+- Polonya: Ekstraklasa
+- İsveç: Allsvenskan
+- Norveç: Eliteserien
+- Danimarka: Superliga
+- UEFA: Champions League, Europa League, Conference League
+- Diğer tüm ülkelerin ligleri
+
+Yanıt SADECE JSON array, başka metin YOK:
 [
-  {{"home": "Takım A", "away": "Takım B", "league": "Lig Adı", "country": "Ülke", "time": "20:00"}},
+  {{"home": "Takım A", "away": "Takım B", "league": "Lig", "country": "Ülke", "time": "20:00"}},
   ...
-]"""
+]
+En az 80 maç listele."""
                 fallback_text, fallback_err = call_gemini(fallback_prompt, use_search=True)
             if fallback_err:
                 st.error(fallback_err)
@@ -930,7 +949,17 @@ Yanıt SADECE JSON array olsun, başka metin YOK:
                     if do_s:
                         with st.spinner("Analiz yapılıyor..."):
                             text, err = run_ai(prompt, ai_model)
-                        show_ai(text, err, p_fake, ai_model, sname=sport_name)
+                        if err:
+                            st.error(err)
+                        elif text:
+                            pred = extract_pred(text, sport_name)
+                            sub = extract_sub_pred(text, sport_name)
+                            sub_html = "".join([f'<div style="font-size:11px;opacity:.7">{k}: {v}</div>' for k,v in sub.items()]) if sub else ""
+                            if pred:
+                                st.markdown(f'<div class="pred-box"><div class="pred-label">🔮 TAHMİN</div><div class="pred-score">{pred}</div><div class="pred-label">{home} – {away}</div>{sub_html}</div>', unsafe_allow_html=True)
+                            show_det = st.checkbox("📋 Detayı gör", key=f"det_fake_{i}")
+                            if show_det:
+                                st.markdown(f'<div class="ai-box">{text}</div>', unsafe_allow_html=True)
                     else:
                         compare_all_models(prompt, p_fake, _sport_name=sport_name)
 
@@ -940,6 +969,30 @@ if cache_ts:
     st.markdown(f'<span class="cache-info">📦 Maç öncesi liste bugün {cache_ts}\'de çekildi — gün boyunca sabit kalır</span>', unsafe_allow_html=True)
 
 pre_all=[parse(m,cfg["key"]) for m in pre_raw]
+
+# Auto-supplement with Gemini if API has few matches
+if len(pre_all) < 15 and GEMINI_KEY and cfg["key"] != "tennis":
+    supp_key = f"supp_{sport_name}_{date_str}"
+    if supp_key not in st.session_state:
+        st.session_state[supp_key] = None
+    if st.session_state[supp_key] is None:
+        if st.button(f"🌐 Gemini ile {sport_name} maçlarını tamamla ({len(pre_all)} maç az geldi)", key="supp_btn"):
+            with st.spinner("Gemini ek maçlar arıyor..."):
+                existing = [(p["home"]+" "+p["away"]).lower() for p in pre_all]
+                supp_prompt = f"""{date_str} tarihindeki {sport_name} maçlarını JSON listele. Sadece şu takımları ALMA (zaten var): {", ".join(existing[:10])}
+TÜM ligleri dahil et, en az 60 maç. SADECE JSON array:
+[{{"home":"A","away":"B","league":"L","country":"C","time":"20:00"}},...] """
+                supp_text, supp_err = call_gemini(supp_prompt, use_search=True)
+            if supp_text and not supp_err:
+                import json as _j
+                try:
+                    clean = supp_text.strip()
+                    for t in ["```json","```JSON","```"]: clean=clean.replace(t,"")
+                    s = clean.find("["); e = clean.rfind("]")+1
+                    if s>=0 and e>s: clean=clean[s:e]
+                    st.session_state[supp_key] = _j.loads(clean)
+                    st.rerun()
+                except: st.session_state[supp_key] = []
 
 if search:
     q=search.lower()
@@ -1061,7 +1114,6 @@ def match_card(p,raw_list):
                     news_t, _ = call_gemini(f"{p['home']} vs {p['away']}: güncel sakatlıklar. Türkçe 3 madde.", use_search=True)
                     st.session_state[news_k] = news_t or ""
                 if st.session_state.get(news_k):
-                    st.markdown(f'<div class="news-box">🌐 {st.session_state[news_k]}</div>', unsafe_allow_html=True)
                     q_prompt += f"\n\nGÜNCEL:\n{st.session_state[news_k]}"
 
         if run_type == "single":
