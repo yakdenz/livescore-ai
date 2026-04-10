@@ -79,6 +79,10 @@ for k,v in [("bulk_results",{}),("selected",set()),("live_loaded",False),("live_
     if k not in st.session_state:
         st.session_state[k] = v
 
+# Type safety - ensure gemini_fallback is always a dict
+if not isinstance(st.session_state.gemini_fallback, dict):
+    st.session_state.gemini_fallback = {}
+
 # ── HELPERS ───────────────────────────────────────────────────────
 def get_sh(m, sk):
     if sk=="football": return m["fixture"]["status"]["short"]
