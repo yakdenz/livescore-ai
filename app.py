@@ -53,6 +53,7 @@ MAJOR_IDS = {39,140,135,78,61,94,88,144,207,2,3,848,1,12,120,57}
 SPORT_CONFIG = {
     "⚽ Futbol":     {"key":"football",  "base":"https://v3.football.api-sports.io",  "emoji":"⚽"},
     "🏀 Basketbol":  {"key":"basketball","base":"https://v1.basketball.api-sports.io","emoji":"🏀"},
+    "🎾 Tenis":      {"key":"tennis",    "base":"https://v1.tennis.api-sports.io",    "emoji":"🎾"},
     "🏒 Hokey":      {"key":"hockey",    "base":"https://v1.hockey.api-sports.io",    "emoji":"🏒"},
     "🤼 MMA":        {"key":"mma",       "base":"https://v1.mma.api-sports.io",       "emoji":"🤼"},
     "🏉 Rugby":      {"key":"rugby",     "base":"https://v1.rugby.api-sports.io",     "emoji":"🏉"},
@@ -301,12 +302,20 @@ def extract_sub_pred(text, sport):
     sl = sport.lower()
     # Voleybol ve diğerleri için sub pred yok
     if any(w in sl for w in ["voleybol","formula","mma","rugby"]): return {}
+    is_tennis = "tenis" in sl
     result = {}
     lines = text.split("\n")
     is_big = any(w in sl for w in ["basket","nba","hokey","hockey"])
+    is_tennis = "tenis" in sl
     for line in lines:
         ll = line.lower()
-        if is_big:
+        if is_tennis:
+            if "1.set" in ll or "ilk set" in ll:
+                m = re.search(r'(\d{1,2})\s*[-–]\s*(\d{1,2})', line)
+                if m:
+                    a,b = int(m.group(1)),int(m.group(2))
+                    if a<=7 and b<=7: result["1.Set"] = f"{m.group(1)}–{m.group(2)}"
+        elif is_big:
             # Basketbol/Hokey: 1.Yarı
             if any(w in ll for w in ["1.yarı","ilk yarı","yarı skor","halftime"]):
                 m = re.search(r'(\d{2,3})\s*[-–]\s*(\d{2,3})', line)
@@ -500,6 +509,7 @@ def generic_prompt(sport_name,home,away,status,league):
     is_mma        = "mma" in sl
     is_rugby      = "rugby" in sl
     is_f1         = "formula" in sl
+    is_tennis     = "tenis" in sl
 
     if is_basketball:
         fmt="102-95"; detail="""3. 🔮 1.ÇEYREK TAHMİNİ – İlk çeyrek skoru (örn: 28-25)
@@ -525,6 +535,10 @@ def generic_prompt(sport_name,home,away,status,league):
         fmt="Pole pozisyon / İlk 3"; detail="""3. 🔮 POLE POZİSYON TAHMİNİ – Kim pole alır?
 4. 🔮 PODYUM TAHMİNİ – Mutlaka yaz: "Tahmin: 1.[İsim] 2.[İsim] 3.[İsim]"
 5. ⚡ KRİTİK FAKTÖR – Sıralama hızı, pit stratejisi vb."""
+    elif is_tennis:
+        fmt="2-0 veya 2-1"; detail="""3. 🔮 KAZANAN TAHMİNİ – Kim kazanır? Mutlaka yaz: "Tahmin edilen skor: [İsim] 2-0 veya 2-1"
+4. 🔮 İLK SET – İlk seti kim kazanır? (örn: 1.Set: 7-5)
+5. ⚡ KRİTİK FAKTÖR – Kort yüzeyi, form, H2H geçmişi"""
     else:
         fmt="2-1"; detail="""3. 🔮 FİNAL TAHMİNİ – Mutlaka yaz: "Tahmin edilen skor: X-Y" (örn: {fmt})
 4. ⚡ KRİTİK FAKTÖR – Sonucu belirleyecek unsur"""
@@ -595,7 +609,22 @@ def parse(m,sk):
         except: pass
     ko=kickoff_tr(m,sk)
     st_txt={"NS":"Başlamadı","FT":"Bitti","1H":"1.Yarı","2H":"2.Yarı","HT":"Devre Arası",
-            "Q1":"Q1","Q2":"Q2","Q3":"Q3","Q4":"Q4","OT":"OT"}.get(sh,sh)
+            "Q1":"Q1","Q2":"Q2","Q3":"Q3","Q4":"Q4","OT":"OT",
+            "After Penalties":"Penaltı","Finished":"Bitti","Not Started":"Başlamadı",
+            "In Play":"Canlı","Retired":"Çekildi","Walkover":"WO"}.get(sh,sh)
+    # Tennis: get scores
+    if sk=="tennis":
+        try:
+            sc=m.get("scores",{})
+            if sc:
+                h_g=sc.get("home","–") or "–"
+                a_g=sc.get("away","–") or "–"
+        except: pass
+        # Tennis league/tournament
+        try:
+            league=m.get("tournament",{}).get("name","") or league
+            country=m.get("country",{}).get("name","") or country
+        except: pass
     return dict(home=home,away=away,hid=hid,aid=aid,h_score=h_g,a_score=a_g,
                 sh=sh,elapsed=elapsed,kickoff=ko,league=league,country=country,
                 lid=lid,season=season,mid=mid,is_major=lid in MAJOR_IDS,
@@ -995,11 +1024,10 @@ def match_card(p,raw_list):
 
 # ── SEKMELER ─────────────────────────────────────────────────────
 hist_count = len(st.session_state.analysis_history)
-tab_pre,tab_live,tab_hist,tab_tennis=st.tabs([
+tab_pre,tab_live,tab_hist=st.tabs([
     f"🕐 Maç Öncesi ({len(pre_all)})",
     f"🔴 Canlı & Bitti ({len(live_parsed)})",
-    f"📊 Tahmin Geçmişi ({hist_count})",
-    "🎾 Tenis"
+    f"📊 Tahmin Geçmişi ({hist_count})"
 ])
 
 with tab_pre:
@@ -1049,52 +1077,6 @@ with tab_live:
         if lmin:
             st.markdown(f"### 📋 Diğer Ligler ({len(lmin)})")
             for p in lmin: match_card(p,st.session_state.live_data)
-
-with tab_tennis:
-    st.markdown("### 🎾 Tenis Maçları")
-    st.caption("Tenis verisi API-Sports ücretsiz planda kısıtlı — Gemini web aramasıyla güncel maç listesi çekiyoruz.")
-    
-    tennis_date = sel_date.strftime("%d %B %Y")
-    if st.button("🌐 Bugünkü Tenis Maçlarını Gemini ile Çek", type="primary"):
-        if not GEMINI_KEY:
-            st.error("Gemini key gerekli!")
-        else:
-            with st.spinner("Gemini tenis maçlarını arıyor..."):
-                tennis_prompt = f"""{tennis_date} tarihindeki ATP, WTA ve Grand Slam tenis maçlarını listele.
-Her maç için:
-- Turnuva adı
-- Oyuncu 1 vs Oyuncu 2
-- Tur (1. tur, çeyrek final vb.)
-- Favori oyuncu ve kısa gerekçe
-
-Türkçe yaz. Bilgi yoksa "bugün önemli maç yok" de."""
-                tennis_text, tennis_err = call_gemini(tennis_prompt, use_search=True)
-            
-            if tennis_err:
-                st.error(tennis_err)
-            elif tennis_text:
-                st.markdown(tennis_text)
-                
-                # AI tahmin butonu
-                if st.button("🤖 Tüm Maçlar İçin AI Tahmini Al"):
-                    tahmin_prompt = f"""Aşağıdaki tenis maçları için kısa tahminler yap:
-
-{tennis_text}
-
-Her maç için:
-🎾 [Oyuncu 1] vs [Oyuncu 2]
-🏆 Kazanan: [isim] ([2-0 / 2-1 / set skoru tahmini])
-⚡ Gerekçe: [1 cümle]
----"""
-                    with st.spinner("AI tahminler yapıyor..."):
-                        for model_name in AI_MODELS:
-                            text, err = run_ai(tahmin_prompt, model_name)
-                            if text and not err:
-                                color={"groq":"#EF9F27","gemini":"#22c55e","gpt":"#378ADD","deepseek":"#E24B4A"}.get(AI_MODELS[model_name]["id"],"#888")
-                                st.markdown(f"**{model_name}**")
-                                st.markdown(f'<div class="ai-box" style="border-color:{color}55">{text}</div>', unsafe_allow_html=True)
-    else:
-        st.info("👆 Butona bas — Gemini bugünkü tenis maçlarını internetten çeker.")
 
 with tab_hist:
     hist = st.session_state.analysis_history
