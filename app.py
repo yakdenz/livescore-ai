@@ -40,6 +40,18 @@ st.markdown("""
 .mb-gpt{background:#E6F1FB;color:#0C447C}
 .news-box{background:rgba(59,130,246,.06);border:1px solid rgba(59,130,246,.2);
           border-radius:8px;padding:10px;margin:6px 0;font-size:13px;line-height:1.6}
+/* ── SKOR TEK SATIR ── */
+.pred-score{white-space:nowrap !important}
+/* ── SCROLL TO TOP ── */
+#scroll-top-btn{
+  position:fixed;bottom:24px;right:18px;z-index:9999;
+  width:46px;height:46px;border-radius:50%;
+  background:#4e8cff;color:#fff;border:2px solid rgba(255,255,255,.3);
+  font-size:20px;cursor:pointer;box-shadow:0 3px 12px rgba(0,0,0,.3);
+  display:flex;align-items:center;justify-content:center;
+  opacity:0;transition:opacity .25s,transform .2s;pointer-events:none;transform:scale(.8)
+}
+#scroll-top-btn.visible{opacity:1;pointer-events:auto;transform:scale(1)}
 /* ── BUTONLAR: MOBİLDE YAN YANA ── */
 div[data-testid="stHorizontalBlock"] > div[data-testid="stColumn"] {
   flex: 1 1 0 !important;
@@ -63,6 +75,36 @@ div[data-testid="stHorizontalBlock"] > div[data-testid="stColumn"] > div > div >
   }
 }
 </style>
+""", unsafe_allow_html=True)
+
+# ── SCROLL TO TOP BUTONU (sabit, sağ alt) ─────────────────────────
+st.markdown("""
+<button id="scroll-top-btn" onclick="window.scrollTo({top:0,behavior:'smooth'})" title="Yukarı çık">⬆</button>
+<script>
+(function(){
+  var btn = document.getElementById('scroll-top-btn');
+  if(!btn) return;
+  var ticking = false;
+  function onScroll(){
+    if(!ticking){
+      window.requestAnimationFrame(function(){
+        btn.classList.toggle('visible', window.scrollY > 300);
+        ticking = false;
+      });
+      ticking = true;
+    }
+  }
+  window.addEventListener('scroll', onScroll, {passive:true});
+  // Streamlit içinde iframe varsa parent'a da bak
+  try{
+    var frame = window.frameElement;
+    if(frame){
+      var parentWin = frame.ownerDocument.defaultView;
+      parentWin.addEventListener('scroll', onScroll, {passive:true});
+    }
+  }catch(e){}
+})();
+</script>
 """, unsafe_allow_html=True)
 
 API_KEY    = get_secret("API_SPORTS_KEY")
@@ -759,9 +801,23 @@ def compare_all_models(prompt,p,_sport_name=""):
             sub=extract_sub_pred(res["text"],_sport_name) if res["text"] else {}
             color={"groq":"#EF9F27","gemini":"#22c55e","gpt":"#378ADD","deepseek":"#E24B4A"}.get(AI_MODELS[model_name]["id"],"#888")
             short_name=" ".join(model_name.split()[:2])
-            sub_lines = "".join([f'<div style="font-size:11px;color:{color};opacity:.8;margin-top:2px">{k}: <b>{v}</b></div>' for k,v in sub.items() if k and v]) if sub else ""
+            sub_lines = "".join([
+                f'<div style="font-size:11px;color:{color};font-weight:600;margin-top:4px;'
+                f'background:rgba(128,128,128,.08);border-radius:6px;padding:2px 6px;'
+                f'white-space:nowrap">{k}: {v}</div>'
+                for k,v in sub.items() if k and v
+            ]) if sub else ""
             if pred:
-                st.markdown(f'<div style="border:2px solid {color};border-radius:10px;padding:10px;text-align:center;margin-bottom:8px"><div style="font-size:10px;opacity:.6;margin-bottom:2px">{short_name}</div><div style="font-size:24px;font-weight:900;color:{color}">{pred}</div>{sub_lines}</div>', unsafe_allow_html=True)
+                st.markdown(
+                    f'<div style="border:2px solid {color};border-radius:10px;padding:10px 8px;'
+                    f'text-align:center;margin-bottom:8px">'
+                    f'<div style="font-size:10px;opacity:.6;margin-bottom:4px">{short_name}</div>'
+                    f'<div style="font-size:22px;font-weight:900;color:{color};white-space:nowrap;'
+                    f'letter-spacing:.5px">{pred}</div>'
+                    f'{sub_lines}'
+                    f'</div>',
+                    unsafe_allow_html=True
+                )
             elif res["err"]:
                 st.markdown(f"""<div style="border:1px solid #888;border-radius:10px;padding:10px;text-align:center">
                     <div style="font-size:10px;opacity:.6">{short_name}</div>
@@ -1491,10 +1547,15 @@ with tab_hist:
                     sub = h.get("sub_pred",{})
                     sub_html = ""
                     if sub:
-                        sub_html = "".join([f'<div style="font-size:10px;opacity:.7">{k}: {v}</div>' for k,v in sub.items()])
+                        sub_html = "".join([
+                            f'<div style="font-size:10px;font-weight:600;color:{color};'
+                            f'background:rgba(128,128,128,.08);border-radius:5px;'
+                            f'padding:1px 5px;margin-top:3px;white-space:nowrap">{k}: {v}</div>'
+                            for k,v in sub.items()
+                        ])
                     st.markdown(f'''<div style="border:1.5px solid {color};border-radius:10px;padding:8px;text-align:center">
                         <div style="font-size:10px;color:{color};opacity:.8">{short}</div>
-                        <div style="font-size:20px;font-weight:900;color:{color}">{pred}</div>
+                        <div style="font-size:20px;font-weight:900;color:{color};white-space:nowrap">{pred}</div>
                         {sub_html}
                     </div>''', unsafe_allow_html=True)
 
