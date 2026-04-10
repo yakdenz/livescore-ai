@@ -915,8 +915,7 @@ Yanıt SADECE şu JSON formatında olsun, başka metin olmasın:
                             st.session_state[news_key_g] = news_t or ""
                         news_t = st.session_state.get(news_key_g, "")
                         if news_t:
-                            with st.expander("🌐 Güncel Haberler"):
-                                st.markdown(f'<div class="news-box">{news_t}</div>', unsafe_allow_html=True)
+                            st.markdown(f'<div class="news-box">🌐 <b>Güncel Haberler:</b><br>{news_t}</div>', unsafe_allow_html=True)
                             prompt = prompt + f"\n\nGÜNCEL:\n{news_t}"
                     if do_s:
                         with st.spinner("Analiz yapılıyor..."):
@@ -1079,8 +1078,7 @@ def match_card(p,raw_list):
                             st.session_state[news_key] = news_text or ""
                         news_text = st.session_state.get(news_key, "")
                         if news_text:
-                            with st.expander("🌐 Güncel Haberler (Gemini)"):
-                                st.markdown(f'<div class="news-box">{news_text}</div>', unsafe_allow_html=True)
+                            st.markdown(f'<div class="news-box">🌐 <b>Güncel Haberler:</b><br>{news_text}</div>', unsafe_allow_html=True)
                             prompt = prompt + f"\n\nGÜNCEL HABERLER:\n{news_text}"
 
                     if do_single:
@@ -1125,8 +1123,7 @@ def match_card(p,raw_list):
                             st.session_state[news_key2] = news_text or ""
                         news_text = st.session_state.get(news_key2, "")
                         if news_text:
-                            with st.expander("🌐 Güncel Haberler"):
-                                st.markdown(f'<div class="news-box">{news_text}</div>', unsafe_allow_html=True)
+                            st.markdown(f'<div class="news-box">🌐 <b>Güncel Haberler:</b><br>{news_text}</div>', unsafe_allow_html=True)
                             prompt = prompt + f"\n\nGÜNCEL HABERLER:\n{news_text}"
                     if do_single2:
                         with st.spinner("AI analiz yapıyor..."): text,err=run_ai(prompt,ai_model)
