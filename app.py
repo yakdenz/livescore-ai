@@ -978,6 +978,10 @@ if _new_sport != sport_name:
 if not API_KEY or "buraya" in API_KEY:
     st.error("⚠️ `.env` dosyasına `API_SPORTS_KEY` ekle."); st.stop()
 
+# ── VERİ: Detay ekranı için önceden yükle ──────────────────────────
+with st.spinner("Yükleniyor..."):
+    pre_raw, cache_ts = fetch_prematch_cached(cfg["key"],cfg["base"],date_str,API_KEY)
+
 # ── MAÇ DETAY EKRANI (aktifse tüm sayfayı kaplar) ────────────────
 if st.session_state.get("detail_match"):
     dm = st.session_state.detail_match
@@ -1020,13 +1024,14 @@ if st.session_state.get("detail_match"):
                 st.markdown(f'<div style="border:2px solid {c};border-radius:10px;padding:8px;text-align:center"><div style="font-size:10px;opacity:.6">{sn}</div><div style="font-size:20px;font-weight:900;color:{c};white-space:nowrap">{h.get("pred","?")}</div>{sub_html}<div style="font-size:9px;opacity:.4;margin-top:2px">{h["time"]}</div></div>', unsafe_allow_html=True)
         st.markdown("---")
 
-    # Analiz butonları
+    # Analiz butonları + web haber seçeneği
     st.markdown("#### 🤖 Yeni Analiz")
+    use_ws_d = st.checkbox("🌐 Gemini ile güncel haber/sakat bilgisi çek", key=f"ws_d_{mk}", value=False)
     da1, da2, da3 = st.columns(3)
     with da1:
         if st.button("🤖 Analiz", key=f"d_single_{mk}", use_container_width=True):
             st.session_state[f"d_run_{mk}"] = "single"
-            st.session_state.pop(f"d_res_{mk}", None)  # önceki sonucu temizle
+            st.session_state.pop(f"d_res_{mk}", None)
     with da2:
         if st.button("⚡ 4 Model", key=f"d_cmp_{mk}", use_container_width=True):
             st.session_state[f"d_run_{mk}"] = "compare"
@@ -1058,7 +1063,7 @@ if st.session_state.get("detail_match"):
             else:
                 d_prompt = generic_prompt(sport_name,p["home"],p["away"],p["status_txt"],p["league"])
 
-            if run_t == "web_compare" and GEMINI_KEY:
+            if (use_ws_d or run_t == "web_compare") and GEMINI_KEY:
                 nk = f"news_{mk}"
                 if nk not in st.session_state:
                     nt,_ = call_gemini(build_news_prompt(p["home"],p["away"],sport_name,p.get("league","")), use_search=True)
@@ -1125,18 +1130,45 @@ if st.session_state.get("detail_match"):
                         "sub_pred": extract_sub_pred(_res["text"], sport_name)
                     })
 
-    # Futbol istatistikleri
-    if cfg["key"]=="football" and p["sh"] not in WAIT_SH:
+    # Futbol: İstatistik + Olaylar tabları
+    if cfg["key"]=="football":
         st.markdown("---")
-        st.markdown("#### 📈 İstatistikler")
-        with st.spinner("Yükleniyor..."):
-            stats_d = fetch_stats(p["mid"])
-        if stats_d and len(stats_d)>=2:
-            h2s = {s["type"]:s["value"] for s in stats_d[0].get("statistics",[])}
-            a2s = {s["type"]:s["value"] for s in stats_d[1].get("statistics",[])}
-            for k in ["Ball Possession","Total Shots","Shots on Goal","Corner Kicks","Fouls","Yellow Cards"]:
-                hv=h2s.get(k,"-"); av=a2s.get(k,"-")
-                if hv not in [None,"-"] or av not in [None,"-"]: render_bar(k,hv or"-",av or"-")
+        _dt1, _dt2 = st.tabs(["📈 İstatistikler", "⚡ Olaylar"])
+        with _dt1:
+            if p["sh"] in WAIT_SH:
+                st.info("Maç başlamadı.")
+            else:
+                with st.spinner("Yükleniyor..."):
+                    stats_d = fetch_stats(p["mid"])
+                if stats_d and len(stats_d)>=2:
+                    h2s = {s["type"]:s["value"] for s in stats_d[0].get("statistics",[])}
+                    a2s = {s["type"]:s["value"] for s in stats_d[1].get("statistics",[])}
+                    for k in ["Ball Possession","Total Shots","Shots on Goal","Shots off Goal",
+                              "Blocked Shots","Corner Kicks","Fouls","Yellow Cards","Red Cards","Goalkeeper Saves"]:
+                        hv=h2s.get(k,"-"); av=a2s.get(k,"-")
+                        if hv not in [None,"-"] or av not in [None,"-"]: render_bar(k,hv or"-",av or"-")
+                else:
+                    st.warning("İstatistik henüz yok.")
+        with _dt2:
+            if p["sh"] in WAIT_SH:
+                st.info("Maç başlamadı.")
+            else:
+                with st.spinner("Yükleniyor..."):
+                    events_d = fetch_events(p["mid"])
+                if events_d:
+                    for e in events_d:
+                        t=e.get("time",{}).get("elapsed","?")
+                        team=e["team"]["name"]; pl=e.get("player",{}).get("name","")
+                        det=e.get("detail",e["type"]); ast_=e.get("assist",{}).get("name","")
+                        if e["type"]=="Goal":
+                            icon="🅿️" if "Penalty" in det else "⚽"
+                            st.success(f"{icon} **{t}'** {team} — {pl}"+(f" *(asist: {ast_})*" if ast_ else ""))
+                        elif e["type"]=="Card":
+                            st.warning(f"{'🟨' if 'Yellow' in det else '🟥'} **{t}'** {team} — {pl}")
+                        elif e["type"]=="subst":
+                            st.info(f"🔄 **{t}'** {team} — çıkan: {pl} / giren: {ast_}")
+                else:
+                    st.info("Henüz olay yok.")
 
     st.stop()  # Detay ekranı aktifken geri kalanı render etme
 
@@ -1146,8 +1178,7 @@ if country_filter_key not in st.session_state:
     st.session_state[country_filter_key] = "Hepsi"
 
 # ── VERİ: MAÇ ÖNCESİ (günlük cache) ─────────────────────────────
-with st.spinner("Maç öncesi liste yükleniyor..."):
-    pre_raw, cache_ts = fetch_prematch_cached(cfg["key"],cfg["base"],date_str,API_KEY)
+# pre_raw zaten yukarıda yüklendi
 
 # Gemini fallback if no matches found
 if not pre_raw and GEMINI_KEY:
