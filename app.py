@@ -269,7 +269,18 @@ def call_groq(prompt):
             max_tokens=900,temperature=0.7)
         return r.choices[0].message.content,None
     except Exception as e:
-        return None,f"Groq hatası: {e}"
+        err=str(e)
+        # Rate limit → otomatik Gemini fallback
+        if "429" in err or "rate_limit" in err or "TPD" in err:
+            if GEMINI_KEY:
+                st.toast("⚡ Groq limiti doldu, Gemini'ye geçiliyor...", icon="🔄")
+                return call_gemini(prompt)
+            # Kalan süreyi parse et
+            import re as _re
+            m=_re.search(r'try again in (\d+m\d+)', err)
+            wait=m.group(1) if m else "bir süre"
+            return None,f"⏳ Groq günlük limit doldu ({wait} bekle). Gemini veya başka model seç."
+        return None,f"Groq hatası: {err[:120]}"
 
 def call_gemini(prompt, use_search=False):
     if not GEMINI_KEY: return None,"⚠️ Gemini key bulunamadı (.env → GEMINI_API_KEY)"
@@ -1482,11 +1493,52 @@ with tab_pre:
     if not pre_all:
         st.info("Maç öncesi maç bulunamadı.")
     else:
-        if pre_major:
-            for p in pre_major: match_card(p,pre_raw)
-        if pre_minor:
-            if pre_major: st.markdown(f'<div style="font-size:11px;opacity:.5;margin:8px 0 4px">Diğer ligler ({len(pre_minor)})</div>', unsafe_allow_html=True)
-            for p in pre_minor: match_card(p,pre_raw)
+        from collections import defaultdict as _dd2
+        # Lig bazlı grupla
+        _lig_grp = _dd2(list)
+        for _p in pre_all:
+            _lig_key = f"{_p.get('country','')} – {_p['league']}"
+            _lig_grp[_lig_key].append(_p)
+
+        # Major ligler önce
+        _major_names = ["Premier League","La Liga","Serie A","Bundesliga","Ligue 1",
+                        "Süper Lig","Champions League","Europa League","Conference League",
+                        "NBA","Euroleague","ATP","WTA"]
+        def _lig_sort_key(lg):
+            for i,m in enumerate(_major_names):
+                if m.lower() in lg.lower(): return i
+            return 99
+        _sorted_ligs = sorted(_lig_grp.keys(), key=_lig_sort_key)
+
+        # Hangi lig varsayılan açık?
+        _open_lig_key = "open_leagues"
+        if _open_lig_key not in st.session_state:
+            # İlk major ligi otomatik aç
+            st.session_state[_open_lig_key] = {_sorted_ligs[0]} if _sorted_ligs else set()
+
+        st.markdown(f'<div style="font-size:12px;opacity:.5;margin-bottom:8px">{len(_sorted_ligs)} lig · {len(pre_all)} maç — bir lige tıkla</div>', unsafe_allow_html=True)
+
+        for _lig in _sorted_ligs:
+            _matches = _lig_grp[_lig]
+            _cnt = len(_matches)
+            _is_open = _lig in st.session_state[_open_lig_key]
+            _arrow = "🔽" if _is_open else "▶️"
+            _is_maj = _lig_sort_key(_lig) < 99
+
+            # Lig başlık satırı — tıklanabilir buton
+            _lig_label = f"{_arrow} {'⭐' if _is_maj else ''} {_lig}  ({_cnt})"
+            if st.button(_lig_label, key=f"lig_btn_{_lig}", use_container_width=True):
+                if _is_open:
+                    st.session_state[_open_lig_key].discard(_lig)
+                else:
+                    st.session_state[_open_lig_key].add(_lig)
+                st.rerun()
+
+            # Açıksa maçları göster
+            if _is_open:
+                for _p in _matches:
+                    match_card(_p, pre_raw)
+                st.markdown("---")
 
 with tab_live:
     # Manuel tetikleme
