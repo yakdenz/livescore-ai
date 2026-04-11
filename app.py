@@ -839,19 +839,21 @@ def show_ai(text,err,p,model_name,sname=None,show_tokens=True):
     tokens=estimate_tokens(text)
     token_info=f' <span style="font-size:11px;opacity:.5">~{tokens} token</span>' if show_tokens else ""
     st.markdown(f'<div class="ai-box">🤖 <b>{model_name}</b>{token_info}<br><br>{text}</div>',unsafe_allow_html=True)
-    # Save to history
-
-    st.session_state.analysis_history.append({
+    # Geçmişe kaydet — aynı maç+model varsa üzerine yaz
+    _new_entry = {
         "time": dt_module.datetime.now(TZ_TR).strftime("%H:%M"),
-        "sport": sname,
-        "home": p["home"], "away": p["away"],
-        "league": p.get("league",""),
-        "model": model_name,
-        "pred": pred or "?",
-        "sub_pred": sub_pred,
-        "text": text,
-        "tokens": tokens
-    })
+        "sport": sname, "home": p["home"], "away": p["away"],
+        "league": p.get("league",""), "model": model_name,
+        "pred": pred or "?", "sub_pred": sub_pred,
+        "text": text, "tokens": tokens
+    }
+    _hist = st.session_state.analysis_history
+    _idx = next((i for i,h in enumerate(_hist)
+                 if h.get("home")==p["home"] and h.get("away")==p["away"] and h.get("model")==model_name), None)
+    if _idx is not None:
+        _hist[_idx] = _new_entry
+    else:
+        _hist.append(_new_entry)
 
 def compare_all_models(prompt,p,_sport_name=""):
     """Tüm modelleri paralel çalıştır ve yan yana göster"""
@@ -916,23 +918,23 @@ def compare_all_models(prompt,p,_sport_name=""):
                     <div style="font-size:11px;opacity:.7;margin-top:4px">{detail}</div>
                 </div>''', unsafe_allow_html=True)
 
-    # Save to history (always)
-
+    # Save to history — dedup (aynı maç+model varsa üzerine yaz)
     for model_name,res in results.items():
         if res.get("text") and not res.get("err"):
             pred=extract_pred(res["text"],_sport_name)
             tokens=estimate_tokens(res["text"])
-            st.session_state.analysis_history.append({
+            _entry = {
                 "time": dt_module.datetime.now(TZ_TR).strftime("%H:%M"),
-                "sport": _sport_name,
-                "home": p["home"], "away": p["away"],
-                "league": p.get("league",""),
-                "model": model_name,
-                "pred": pred or "?",
-                "text": res["text"],
-                "tokens": tokens,
+                "sport": _sport_name, "home": p["home"], "away": p["away"],
+                "league": p.get("league",""), "model": model_name,
+                "pred": pred or "?", "text": res["text"], "tokens": tokens,
                 "sub_pred": extract_sub_pred(res["text"],_sport_name)
-            })
+            }
+            _hist = st.session_state.analysis_history
+            _idx = next((i for i,h in enumerate(_hist)
+                         if h.get("home")==p["home"] and h.get("away")==p["away"] and h.get("model")==model_name), None)
+            if _idx is not None: _hist[_idx] = _entry
+            else: _hist.append(_entry)
 
 # ── SIDEBAR ───────────────────────────────────────────────────────
 with st.sidebar:
@@ -1018,15 +1020,22 @@ if st.session_state.get("detail_match"):
       </div>
     </div>""", unsafe_allow_html=True)
 
-    # Önceki tahminler varsa göster
+    # Önceki tahminler — her model için sadece en son
     hist_for_match = [h for h in st.session_state.analysis_history
                       if h.get("home")==p["home"] and h.get("away")==p["away"]]
     if hist_for_match:
-        st.markdown("#### 🔮 Önceki Tahminler")
+        # Her model için en son tahmini al
+        _seen_models = {}
+        for h in reversed(hist_for_match):
+            if h["model"] not in _seen_models:
+                _seen_models[h["model"]] = h
+        _dedup = list(reversed(list(_seen_models.values())))
+
+        st.markdown("#### 🔮 Tahminler")
         MODEL_COLORS_D = {"🟡 Groq – Llama 3.3":"#EF9F27","🟢 Gemini 2.5 Flash":"#22c55e","⚪ GPT-4o Mini":"#378ADD","🔴 DeepSeek V3":"#E24B4A"}
         MODEL_SHORT_D  = {"🟡 Groq – Llama 3.3":"Groq","🟢 Gemini 2.5 Flash":"Gemini","⚪ GPT-4o Mini":"GPT","🔴 DeepSeek V3":"DeepSeek"}
-        pc = st.columns(len(hist_for_match))
-        for i,h in enumerate(hist_for_match):
+        pc = st.columns(len(_dedup))
+        for i,h in enumerate(_dedup):
             c = MODEL_COLORS_D.get(h["model"],"#888")
             sn = MODEL_SHORT_D.get(h["model"], h["model"].split()[0])
             sub = h.get("sub_pred",{})
@@ -1143,18 +1152,23 @@ if st.session_state.get("detail_match"):
                     _clr = {"groq":"#EF9F27","gemini":"#22c55e","gpt":"#378ADD","deepseek":"#E24B4A"}.get(AI_MODELS[_mn]["id"],"#888")
                     _sn  = " ".join(_mn.split()[:2])
                     st.markdown(f'<div class="ai-box" style="border-color:{_clr}55"><b style="color:{_clr}">{_sn}</b><br><br>{_res["text"]}</div>', unsafe_allow_html=True)
-            # Geçmişe kaydet
+            # Geçmişe kaydet — dedup
             for _mn,_res in _results.items():
                 if _res.get("text") and not _res.get("err"):
                     _pred = extract_pred(_res["text"], sport_name)
-                    st.session_state.analysis_history.append({
+                    _entry = {
                         "time": dt_module.datetime.now(TZ_TR).strftime("%H:%M"),
                         "sport": sport_name, "home": p["home"], "away": p["away"],
                         "league": p.get("league",""), "model": _mn,
                         "pred": _pred or "?", "text": _res["text"],
                         "tokens": estimate_tokens(_res["text"]),
                         "sub_pred": extract_sub_pred(_res["text"], sport_name)
-                    })
+                    }
+                    _hist = st.session_state.analysis_history
+                    _idx = next((i for i,h in enumerate(_hist)
+                                 if h.get("home")==p["home"] and h.get("away")==p["away"] and h.get("model")==_mn), None)
+                    if _idx is not None: _hist[_idx] = _entry
+                    else: _hist.append(_entry)
 
     # Futbol: İstatistik + Olaylar tabları (her zaman göster)
     if cfg["key"]=="football":
