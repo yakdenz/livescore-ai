@@ -433,55 +433,63 @@ def extract_sub_pred(text, sport):
     if not text: return {}
     sl = sport.lower()
     if any(w in sl for w in ["voleybol","formula","mma","rugby"]): return {}
-    is_tennis  = "tenis" in sl
-    is_basket  = any(w in sl for w in ["basket","nba"])
-    is_hockey  = any(w in sl for w in ["hokey","hockey"])
+    is_tennis = "tenis" in sl
+    is_basket = any(w in sl for w in ["basket","nba"])
+    is_hockey = any(w in sl for w in ["hokey","hockey"])
     result = {}
+
+    # Final skor satırlarını çıkar — bunlarda sub pred arama
+    FINAL_KW = ["tahmin edilen skor","final skor","final tahmin","maç sonu",
+                "maç skoru","sonuç:","biteceğ","🔮","maç tahmini","maç skoru"]
+
     lines = text.split("\n")
+    clean_lines = [l for l in lines if not any(w in l.lower() for w in FINAL_KW)]
+    clean_text = "\n".join(clean_lines)
 
-    YARI_KW   = ["1.yarı","ilk yarı","devre arası","halftime","half time",
-                 "1.yari","yari tahmin","yarı tahmin","1. yarı","ht:","ht "]
-    BASKET_KW = ["1.yarı","ilk yarı","yarı skor","halftime","half time","1.çeyrek","ilk çeyrek"]
-    HOCKEY_KW = ["1.periyot","ilk periyot","birinci periyot","1st period","p1:","1.per"]
-    SET_KW    = ["1.set","ilk set","first set"]
-    # Final skor keyword'leri içeren satırlarda sub pred arama
-    FINAL_KW  = ["tahmin edilen skor","final skor","final tahmin","maç sonu","maç skoru",
-                 "sonuç:","biteceğ","🔮","maç tahmini"]
+    if is_tennis:
+        # 1.Set: 7-5 veya "ilk set" yakınında skor
+        m = re.search(r'(?:1\.set|ilk set|first set)[^\n]*?(\d{1,2})\s*[-–]\s*(\d{1,2})', clean_text, re.IGNORECASE)
+        if m:
+            a,b = int(m.group(1)), int(m.group(2))
+            if a <= 7 and b <= 7: result["1.Set"] = f"{a}–{b}"
 
-    for i, line in enumerate(lines):
-        ll = line.lower()
-        # Final skor satırını atla
-        if any(w in ll for w in FINAL_KW):
-            continue
+    elif is_basket:
+        # 1.Yarı: 52-48 gibi
+        m = re.search(r'(?:1\.yarı|ilk yarı|yarı skor|halftime|1\. yarı)[^\n]*?(\d{2,3})\s*[-–]\s*(\d{2,3})', clean_text, re.IGNORECASE)
+        if m:
+            a,b = int(m.group(1)), int(m.group(2))
+            if 20 <= a <= 100 and 20 <= b <= 100: result["1.Yarı"] = f"{a}–{b}"
 
-        def find_score_near(kw_list, pat, mn=None, mx=None):
-            if not any(w in ll for w in kw_list):
-                return None
-            for check_line in lines[i:i+3]:
-                cl = check_line.lower()
-                # Final skor satırını atla
-                if any(w in cl for w in FINAL_KW):
-                    continue
-                m = re.search(pat, check_line)
-                if m:
-                    a,b = int(m.group(1)), int(m.group(2))
-                    if mn is not None and (a < mn or b < mn): continue
-                    if mx is not None and (a > mx or b > mx): continue
-                    return f"{m.group(1)}–{m.group(2)}"
-            return None
+    elif is_hockey:
+        # 1.Periyot: 1-0 gibi
+        m = re.search(r'(?:1\.periyot|ilk periyot|birinci periyot|1st period)[^\n]*?(\d{1,2})\s*[-–]\s*(\d{1,2})', clean_text, re.IGNORECASE)
+        if m:
+            a,b = int(m.group(1)), int(m.group(2))
+            if a <= 5 and b <= 5: result["1.Per"] = f"{a}–{b}"
 
-        if is_tennis:
-            s = find_score_near(SET_KW, r'(\d{1,2})\s*[-–]\s*(\d{1,2})', mx=7)
-            if s: result["1.Set"] = s
-        elif is_basket:
-            s = find_score_near(BASKET_KW, r'(\d{2,3})\s*[-–]\s*(\d{2,3})', mn=20)
-            if s: result["1.Yarı"] = s
-        elif is_hockey:
-            s = find_score_near(HOCKEY_KW, r'(\d{1,2})\s*[-–]\s*(\d{1,2})', mx=5)
-            if s: result["1.Per"] = s
+    else:
+        # Futbol — 1.Yarı: geniş pattern, satır sonrasına da bak
+        # Pattern 1: "1.Yarı tahmini: 1-0" — aynı satırda
+        m = re.search(
+            r'(?:1\.yarı|ilk yarı|devre arası|halftime|1\. yarı|yarı tahmin|ht:)[^\n]{0,40}?(\d{1,2})\s*[-–]\s*(\d{1,2})',
+            clean_text, re.IGNORECASE
+        )
+        if m:
+            a,b = int(m.group(1)), int(m.group(2))
+            if a <= 10 and b <= 10: result["1.Yarı"] = f"{a}–{b}"
         else:
-            s = find_score_near(YARI_KW, r'(\d{1,2})\s*[-–]\s*(\d{1,2})', mx=10)
-            if s: result["1.Yarı"] = s
+            # Pattern 2: keyword satırı, sonraki satırda skor
+            for i,line in enumerate(clean_lines):
+                if any(w in line.lower() for w in ["1.yarı","ilk yarı","devre arası","yarı tahmin","halftime","1. yarı"]):
+                    # sonraki 2 satırda skor ara
+                    for next_line in clean_lines[i+1:i+3]:
+                        m2 = re.search(r'\b(\d{1,2})\s*[-–]\s*(\d{1,2})\b', next_line)
+                        if m2:
+                            a,b = int(m2.group(1)), int(m2.group(2))
+                            if a <= 10 and b <= 10:
+                                result["1.Yarı"] = f"{a}–{b}"
+                                break
+                    if result: break
 
     return result
 
@@ -537,12 +545,24 @@ def extract_consensus(results_dict, sport):
         elif over <= 1:
             consensus["üst/alt"] = ("📉 Alt", f"2.5 Alt ({4-over}/4 model, ort: {avg_total:.1f} gol)")
         
-        # KG var/yok tahmini - text analizi
-        kg_var = sum(1 for _,_,_,txt in preds if any(w in txt.lower() for w in ["kg var","karşılıklı gol","her iki takım da"]))
-        if kg_var >= 3:
-            consensus["kg"] = ("⚽ KG Var", f"Her iki takım da gol atar ({kg_var}/4 model)")
-        elif kg_var <= 1:
-            consensus["kg"] = ("🔒 KG Yok", f"Tek taraflı gol bekleniyor")
+        # KG var/yok — hem keyword hem skor bazlı
+        kg_var_kw = ["kg var","karşılıklı gol","her iki takım","her iki ekip",
+                     "both teams","btts","iki takım da gol","karşılıklı"]
+        kg_yok_kw = ["kg yok","tek taraflı","sadece ev","sadece deplasman",
+                     "one team","clean sheet","gol yemez"]
+        kg_var_count = 0
+        for h,a,_,txt in preds:
+            tl = txt.lower()
+            # Skor bazlı: her iki takım da gol atmışsa KG Var
+            if h > 0 and a > 0:
+                kg_var_count += 1
+            elif any(w in tl for w in kg_var_kw):
+                kg_var_count += 1
+        kg_yok_count = len(preds) - kg_var_count
+        if kg_var_count >= 3:
+            consensus["kg"] = ("⚽ KG Var", f"Her iki takım da gol atar ({kg_var_count}/4 model)")
+        elif kg_yok_count >= 3:
+            consensus["kg"] = ("🔒 KG Yok", f"Tek taraflı gol bekleniyor ({kg_yok_count}/4 model)")
     
     elif is_big:
         avg_h = sum(scores_h)/len(scores_h)
