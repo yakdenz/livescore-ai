@@ -142,7 +142,7 @@ WAIT_SH  = {"NS"}
 TZ_TR    = timezone(timedelta(hours=3))
 
 # ── SESSION STATE ─────────────────────────────────────────────────
-for k,v in [("bulk_results",{}),("selected",set()),("live_loaded",False),("live_data",[]),("live_ts",None),("analysis_history",[]),("gemini_fallback",{})]:
+for k,v in [("bulk_results",{}),("selected",set()),("live_loaded",False),("live_data",[]),("live_ts",None),("analysis_history",[]),("gemini_fallback",{}),("detail_match",None)]:
     if k not in st.session_state:
         st.session_state[k] = v
 
@@ -978,6 +978,113 @@ if _new_sport != sport_name:
 if not API_KEY or "buraya" in API_KEY:
     st.error("⚠️ `.env` dosyasına `API_SPORTS_KEY` ekle."); st.stop()
 
+# ── MAÇ DETAY EKRANI (aktifse tüm sayfayı kaplar) ────────────────
+if st.session_state.get("detail_match"):
+    dm = st.session_state.detail_match
+    p  = dm["p"]
+    mk = str(p["mid"])
+
+    # Geri butonu
+    if st.button("← Geri", key="detail_back"):
+        st.session_state.detail_match = None
+        st.rerun()
+
+    # Başlık
+    h_logo_d = logo_html(p.get("h_logo","")) if cfg["key"]=="football" else ""
+    a_logo_d = logo_html(p.get("a_logo","")) if cfg["key"]=="football" else ""
+    score_col_d = "#ff4444" if p["sh"] in LIVE_SH else "var(--color-text-primary)"
+    st.markdown(f"""
+    <div style="text-align:center;padding:16px 0 8px">
+      <div style="font-size:12px;opacity:.5;margin-bottom:6px">{p.get('league','')} · {p.get('status_txt','')}</div>
+      <div style="display:flex;align-items:center;justify-content:center;gap:12px">
+        <div style="font-size:18px;font-weight:700;text-align:right;flex:1">{p['home']}{h_logo_d}</div>
+        <div style="font-size:26px;font-weight:900;color:{score_col_d};white-space:nowrap;min-width:70px;text-align:center">{p['h_score']}–{p['a_score']}</div>
+        <div style="font-size:18px;font-weight:700;text-align:left;flex:1">{a_logo_d}{p['away']}</div>
+      </div>
+    </div>""", unsafe_allow_html=True)
+
+    # Önceki tahminler varsa göster
+    hist_for_match = [h for h in st.session_state.analysis_history
+                      if h.get("home")==p["home"] and h.get("away")==p["away"]]
+    if hist_for_match:
+        st.markdown("#### 🔮 Önceki Tahminler")
+        MODEL_COLORS_D = {"🟡 Groq – Llama 3.3":"#EF9F27","🟢 Gemini 2.5 Flash":"#22c55e","⚪ GPT-4o Mini":"#378ADD","🔴 DeepSeek V3":"#E24B4A"}
+        MODEL_SHORT_D  = {"🟡 Groq – Llama 3.3":"Groq","🟢 Gemini 2.5 Flash":"Gemini","⚪ GPT-4o Mini":"GPT","🔴 DeepSeek V3":"DeepSeek"}
+        pc = st.columns(len(hist_for_match))
+        for i,h in enumerate(hist_for_match):
+            c = MODEL_COLORS_D.get(h["model"],"#888")
+            sn = MODEL_SHORT_D.get(h["model"], h["model"].split()[0])
+            sub = h.get("sub_pred",{})
+            sub_html = "".join([f'<div style="font-size:10px;color:{c};font-weight:600;white-space:nowrap">{k}: {v}</div>' for k,v in sub.items()])
+            with pc[i]:
+                st.markdown(f'<div style="border:2px solid {c};border-radius:10px;padding:8px;text-align:center"><div style="font-size:10px;opacity:.6">{sn}</div><div style="font-size:20px;font-weight:900;color:{c};white-space:nowrap">{h.get("pred","?")}</div>{sub_html}<div style="font-size:9px;opacity:.4;margin-top:2px">{h["time"]}</div></div>', unsafe_allow_html=True)
+        st.markdown("---")
+
+    # Analiz butonları
+    st.markdown("#### 🤖 Yeni Analiz")
+    da1, da2, da3 = st.columns(3)
+    with da1:
+        if st.button("🤖 Analiz", key=f"d_single_{mk}", use_container_width=True):
+            st.session_state[f"d_run_{mk}"] = "single"
+    with da2:
+        if st.button("⚡ 4 Model", key=f"d_cmp_{mk}", use_container_width=True):
+            st.session_state[f"d_run_{mk}"] = "compare"
+    with da3:
+        if st.button("🌐+⚡", key=f"d_ws_{mk}", use_container_width=True):
+            st.session_state[f"d_run_{mk}"] = "web_compare"
+
+    if st.session_state.get(f"d_run_{mk}"):
+        run_t = st.session_state.pop(f"d_run_{mk}")
+        with st.spinner("Analiz yapılıyor..."):
+            if cfg["key"]=="football":
+                sd  = fetch_stats(p["mid"]) if p["sh"]!="NS" else []
+                ed  = fetch_events(p["mid"]) if p["sh"]!="NS" else []
+                hf  = fetch_form(p["hid"],p["lid"],p["season"])
+                af  = fetch_form(p["aid"],p["lid"],p["season"])
+                hs  = fetch_tstat(p["hid"],p["lid"],p["season"])
+                as_ = fetch_tstat(p["aid"],p["lid"],p["season"])
+                inj_h = fetch_injuries(p["hid"],p["season"])
+                inj_a = fetch_injuries(p["aid"],p["season"])
+                h2hd  = fetch_h2h(p["hid"],p["aid"])
+                stand = fetch_standings(p["lid"],p["season"])
+                pred_api = fetch_predictions(p["mid"])
+                # raw maçı bul
+                _all_raw = pre_raw + st.session_state.live_data
+                raw = next((m for m in _all_raw if m["fixture"]["id"]==p["mid"]), None)
+                d_prompt = football_prompt(raw,sd,ed,hf,af,hs,as_,inj_h,inj_a,h2hd,stand,pred_api) if raw else generic_prompt(sport_name,p["home"],p["away"],p["status_txt"],p["league"])
+            else:
+                d_prompt = generic_prompt(sport_name,p["home"],p["away"],p["status_txt"],p["league"])
+
+            if run_t in ["web_compare","web_single"] and GEMINI_KEY:
+                nk = f"news_{mk}"
+                if nk not in st.session_state:
+                    nt,_ = call_gemini(build_news_prompt(p["home"],p["away"],sport_name,p.get("league","")), use_search=True)
+                    st.session_state[nk] = nt or ""
+                if st.session_state.get(nk):
+                    st.markdown(f'<div class="news-box">🌐 <b>Güncel:</b><br>{st.session_state[nk]}</div>', unsafe_allow_html=True)
+                    d_prompt += f"\n\nGÜNCEL:\n{st.session_state[nk]}"
+
+        if run_t == "single":
+            text,err = run_ai(d_prompt, ai_model)
+            show_ai(text, err, p, ai_model, sname=sport_name)
+        else:
+            compare_all_models(d_prompt, p, _sport_name=sport_name)
+
+    # Futbol istatistikleri
+    if cfg["key"]=="football" and p["sh"] not in WAIT_SH:
+        st.markdown("---")
+        st.markdown("#### 📈 İstatistikler")
+        with st.spinner("Yükleniyor..."):
+            stats_d = fetch_stats(p["mid"])
+        if stats_d and len(stats_d)>=2:
+            h2s = {s["type"]:s["value"] for s in stats_d[0].get("statistics",[])}
+            a2s = {s["type"]:s["value"] for s in stats_d[1].get("statistics",[])}
+            for k in ["Ball Possession","Total Shots","Shots on Goal","Corner Kicks","Fouls","Yellow Cards"]:
+                hv=h2s.get(k,"-"); av=a2s.get(k,"-")
+                if hv not in [None,"-"] or av not in [None,"-"]: render_bar(k,hv or"-",av or"-")
+
+    st.stop()  # Detay ekranı aktifken geri kalanı render etme
+
 # Country filter (populated after data loads)
 country_filter_key = f"country_filter_{sport_name}"
 if country_filter_key not in st.session_state:
@@ -1284,6 +1391,11 @@ def match_card(p,raw_list):
         <div style="flex:1;font-size:14px;font-weight:700;line-height:1.2">{a_logo}{p["away"]}</div>
         <div style="min-width:40px;text-align:right">{time_badge}</div>
     </div>""", unsafe_allow_html=True)
+
+    # Detay butonu — maça gir
+    if st.button("🔍", key=f"detail_{mk}", help="Maç detayına git"):
+        st.session_state.detail_match = {"p": p, "raw_list_key": mk}
+        st.rerun()
     
     checked=st.checkbox("seç",key=f"chk_{mk}",value=(mk in st.session_state.selected),label_visibility="collapsed")
     if checked: st.session_state.selected.add(mk)
@@ -1572,19 +1684,29 @@ with tab_hist:
     if not hist:
         st.info("Henüz analiz yapılmadı. Maç kartlarından AI tahmini al.")
     else:
-        if st.button("🗑️ Geçmişi Temizle"):
-            st.session_state.analysis_history = []
-            st.rerun()
+        hc1, hc2 = st.columns([3,1])
+        with hc1:
+            hist_search = st.text_input("🔍 Takım ara", "", key="hist_search", placeholder="örn: Galatasaray")
+        with hc2:
+            if st.button("🗑️ Temizle", key="hist_clear"):
+                st.session_state.analysis_history = []
+                st.rerun()
 
-        # Group by match (home+away+time)
+        # Group by match
         from collections import defaultdict
         groups = defaultdict(list)
         for h in hist:
             key = f"{h['home']}_{h['away']}_{h['time'][:5]}"
             groups[key].append(h)
 
-        st.markdown(f"**{len(groups)} maç · {len(hist)} analiz**")
-        st.markdown("---")
+        # Arama filtresi
+        if hist_search:
+            q = hist_search.lower()
+            groups = {k:v for k,v in groups.items()
+                      if q in v[0].get("home","").lower() or q in v[0].get("away","").lower()
+                      or q in v[0].get("league","").lower()}
+
+        st.markdown(f'<div style="font-size:12px;opacity:.5;margin-bottom:8px">{len(groups)} maç · {len(hist)} analiz</div>', unsafe_allow_html=True)
 
         MODEL_COLORS = {
             "🟡 Groq – Llama 3.3": "#EF9F27",
