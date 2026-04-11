@@ -258,6 +258,37 @@ def fetch_predictions(fid):
     d=api_get("https://v3.football.api-sports.io/predictions",{"fixture":fid})
     return d.get("response",[{}])[0] if d else {}
 
+@st.cache_data(ttl=1800, show_spinner=False)
+def fetch_odds(fid):
+    """API-Sports /odds endpoint — maç öncesi bahis oranları."""
+    d=api_get("https://v3.football.api-sports.io/odds",{"fixture":fid,"bookmaker":8})  # 8=Bet365
+    if not d: return {}
+    try:
+        bets = d["response"][0]["bookmakers"][0]["bets"]
+        result = {}
+        for bet in bets:
+            if bet["name"] in ["Match Winner","Goals Over/Under","Both Teams Score"]:
+                result[bet["name"]] = {v["value"]:v["odd"] for v in bet["values"]}
+        return result
+    except: return {}
+
+def build_odds_prompt(home, away, league, date_str):
+    """Gemini ile güncel bahis oranlarını çek."""
+    return f"""{date_str} tarihinde oynanan {league} ligindeki {home} - {away} maçı için:
+
+1. 💰 Türk bahis sitelerinden oranlar (Misli, Nesine, Bilyoner, İddaa):
+   - Ev kazanır (1) / Beraberlik (X) / Deplasman kazanır (2) oranları
+   - 2.5 Üst / Alt oranları
+   - KG Var / Yok oranları
+
+2. 🌍 Uluslararası sitelerden (Bet365, William Hill, Betway):
+   - En iyi 1X2 oranları
+   - Favori ve oranı
+
+3. 📊 Genel eğilim: Hangisi favori, para akışı nereye?
+
+Sadece bugün için güncel oranları ver. Türkçe, kısa ve net."""
+
 # ── AI ────────────────────────────────────────────────────────────
 def call_groq(prompt):
     if not GROQ_KEY: return None,"⚠️ Groq key bulunamadı (.env → GROQ_API_KEY)"
@@ -408,21 +439,29 @@ def extract_sub_pred(text, sport):
     result = {}
     lines = text.split("\n")
 
-    # Keyword listesi genişletildi — model ne yazarsa yazsın
-    YARI_KW  = ["1.yarı","ilk yarı","devre arası","halftime","half time",
-                "1.yari","yari tahmin","yarı tahmin","1. yarı","ht:","ht "]
-    BASKET_KW= ["1.yarı","ilk yarı","yarı skor","halftime","half time","1.çeyrek","ilk çeyrek"]
-    HOCKEY_KW= ["1.periyot","ilk periyot","birinci periyot","1st period","p1:","1.per"]
-    SET_KW   = ["1.set","ilk set","first set"]
+    YARI_KW   = ["1.yarı","ilk yarı","devre arası","halftime","half time",
+                 "1.yari","yari tahmin","yarı tahmin","1. yarı","ht:","ht "]
+    BASKET_KW = ["1.yarı","ilk yarı","yarı skor","halftime","half time","1.çeyrek","ilk çeyrek"]
+    HOCKEY_KW = ["1.periyot","ilk periyot","birinci periyot","1st period","p1:","1.per"]
+    SET_KW    = ["1.set","ilk set","first set"]
+    # Final skor keyword'leri içeren satırlarda sub pred arama
+    FINAL_KW  = ["tahmin edilen skor","final skor","final tahmin","maç sonu","maç skoru",
+                 "sonuç:","biteceğ","🔮","maç tahmini"]
 
     for i, line in enumerate(lines):
         ll = line.lower()
-        # Keyword satırında veya bir sonraki 2 satırda skor ara
+        # Final skor satırını atla
+        if any(w in ll for w in FINAL_KW):
+            continue
+
         def find_score_near(kw_list, pat, mn=None, mx=None):
             if not any(w in ll for w in kw_list):
                 return None
-            # Aynı satır + sonraki 2 satır
             for check_line in lines[i:i+3]:
+                cl = check_line.lower()
+                # Final skor satırını atla
+                if any(w in cl for w in FINAL_KW):
+                    continue
                 m = re.search(pat, check_line)
                 if m:
                     a,b = int(m.group(1)), int(m.group(2))
@@ -441,8 +480,6 @@ def extract_sub_pred(text, sport):
             s = find_score_near(HOCKEY_KW, r'(\d{1,2})\s*[-–]\s*(\d{1,2})', mx=5)
             if s: result["1.Per"] = s
         else:
-            # Futbol: satırda keyword VE skor birlikte olabilir,
-            # ya da keyword satırından sonra skor satırı gelebilir
             s = find_score_near(YARI_KW, r'(\d{1,2})\s*[-–]\s*(\d{1,2})', mx=10)
             if s: result["1.Yarı"] = s
 
@@ -1170,10 +1207,10 @@ if st.session_state.get("detail_match"):
                     if _idx is not None: _hist[_idx] = _entry
                     else: _hist.append(_entry)
 
-    # Futbol: İstatistik + Olaylar tabları (her zaman göster)
+    # Futbol: İstatistik + Olaylar + Bahis Oranları tabları (her zaman göster)
     if cfg["key"]=="football":
         st.markdown("---")
-        _dt1, _dt2 = st.tabs(["📈 İstatistikler", "⚡ Olaylar"])
+        _dt1, _dt2, _dt3 = st.tabs(["📈 İstatistikler", "⚡ Olaylar", "💰 Bahis Oranları"])
         with _dt1:
             if p["sh"] == "NS":
                 st.info("Maç başlamadı, istatistik yok.")
@@ -1210,6 +1247,35 @@ if st.session_state.get("detail_match"):
                             st.info(f"🔄 **{t}'** {team} — çıkan: {pl} / giren: {ast_}")
                 else:
                     st.info("Henüz olay yok.")
+
+        with _dt3:
+            # Önce API'den dene
+            _odds_api = fetch_odds(p["mid"]) if p["sh"] == "NS" else {}
+            if _odds_api:
+                st.markdown("**📊 Bet365 Oranları**")
+                for _bet_name, _vals in _odds_api.items():
+                    st.markdown(f"*{_bet_name}*")
+                    _ocols = st.columns(len(_vals))
+                    for _oi, (_val, _odd) in enumerate(_vals.items()):
+                        with _ocols[_oi]:
+                            st.markdown(f'<div style="background:rgba(78,140,255,.1);border-radius:8px;padding:6px;text-align:center"><div style="font-size:10px;opacity:.6">{_val}</div><div style="font-size:18px;font-weight:700;color:#4e8cff">{_odd}</div></div>', unsafe_allow_html=True)
+                    st.markdown("")
+
+            # Gemini ile Türk bahis siteleri
+            _odds_key = f"odds_gem_{mk}"
+            if st.session_state.get(_odds_key):
+                st.markdown(f'<div class="news-box">{st.session_state[_odds_key]}</div>', unsafe_allow_html=True)
+            elif GEMINI_KEY:
+                if st.button("🌐 Misli/Nesine/Bet365 Oranlarını Çek", key=f"odds_btn_{mk}", use_container_width=True):
+                    with st.spinner("Oranlar çekiliyor..."):
+                        _ot, _oe = call_gemini(build_odds_prompt(p["home"], p["away"], p.get("league",""), date_str), use_search=True)
+                    if _ot and not _oe:
+                        st.session_state[_odds_key] = _ot
+                        st.rerun()
+                    elif _oe:
+                        st.error(_oe)
+            else:
+                st.info("Bahis oranları için Gemini API key gerekli.")
 
     st.stop()  # Detay ekranı aktifken geri kalanı render etme
 
