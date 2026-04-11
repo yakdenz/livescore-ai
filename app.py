@@ -1026,15 +1026,19 @@ if st.session_state.get("detail_match"):
     with da1:
         if st.button("🤖 Analiz", key=f"d_single_{mk}", use_container_width=True):
             st.session_state[f"d_run_{mk}"] = "single"
+            st.session_state.pop(f"d_res_{mk}", None)  # önceki sonucu temizle
     with da2:
         if st.button("⚡ 4 Model", key=f"d_cmp_{mk}", use_container_width=True):
             st.session_state[f"d_run_{mk}"] = "compare"
+            st.session_state.pop(f"d_res_{mk}", None)
     with da3:
         if st.button("🌐+⚡", key=f"d_ws_{mk}", use_container_width=True):
             st.session_state[f"d_run_{mk}"] = "web_compare"
+            st.session_state.pop(f"d_res_{mk}", None)
 
-    if st.session_state.get(f"d_run_{mk}"):
-        run_t = st.session_state.pop(f"d_run_{mk}")
+    # Analiz çalıştır ve sonucu session'a kaydet
+    if st.session_state.get(f"d_run_{mk}") and f"d_res_{mk}" not in st.session_state:
+        run_t = st.session_state[f"d_run_{mk}"]
         with st.spinner("Analiz yapılıyor..."):
             if cfg["key"]=="football":
                 sd  = fetch_stats(p["mid"]) if p["sh"]!="NS" else []
@@ -1048,27 +1052,78 @@ if st.session_state.get("detail_match"):
                 h2hd  = fetch_h2h(p["hid"],p["aid"])
                 stand = fetch_standings(p["lid"],p["season"])
                 pred_api = fetch_predictions(p["mid"])
-                # raw maçı bul
                 _all_raw = pre_raw + st.session_state.live_data
                 raw = next((m for m in _all_raw if m["fixture"]["id"]==p["mid"]), None)
                 d_prompt = football_prompt(raw,sd,ed,hf,af,hs,as_,inj_h,inj_a,h2hd,stand,pred_api) if raw else generic_prompt(sport_name,p["home"],p["away"],p["status_txt"],p["league"])
             else:
                 d_prompt = generic_prompt(sport_name,p["home"],p["away"],p["status_txt"],p["league"])
 
-            if run_t in ["web_compare","web_single"] and GEMINI_KEY:
+            if run_t == "web_compare" and GEMINI_KEY:
                 nk = f"news_{mk}"
                 if nk not in st.session_state:
                     nt,_ = call_gemini(build_news_prompt(p["home"],p["away"],sport_name,p.get("league","")), use_search=True)
                     st.session_state[nk] = nt or ""
                 if st.session_state.get(nk):
-                    st.markdown(f'<div class="news-box">🌐 <b>Güncel:</b><br>{st.session_state[nk]}</div>', unsafe_allow_html=True)
                     d_prompt += f"\n\nGÜNCEL:\n{st.session_state[nk]}"
 
-        if run_t == "single":
-            text,err = run_ai(d_prompt, ai_model)
-            show_ai(text, err, p, ai_model, sname=sport_name)
+            if run_t == "single":
+                text,err = run_ai(d_prompt, ai_model)
+                st.session_state[f"d_res_{mk}"] = {"type":"single","text":text,"err":err}
+            else:
+                # 4 model — sonuçları topla ve sakla
+                _models = list(AI_MODELS.keys())
+                _results = {}
+                prog = st.progress(0, text="Modeller analiz yapıyor...")
+                for _i,_mn in enumerate(_models):
+                    prog.progress(_i/len(_models), text=f"{_mn}...")
+                    _t,_e = run_ai(d_prompt,_mn)
+                    _results[_mn] = {"text":_t,"err":_e}
+                prog.progress(1.0); time.sleep(0.3); prog.empty()
+                st.session_state[f"d_res_{mk}"] = {"type":"compare","results":_results}
+
+    # Kayıtlı sonucu göster
+    if f"d_res_{mk}" in st.session_state:
+        _dres = st.session_state[f"d_res_{mk}"]
+        if _dres["type"] == "single":
+            show_ai(_dres["text"], _dres["err"], p, ai_model, sname=sport_name)
         else:
-            compare_all_models(d_prompt, p, _sport_name=sport_name)
+            _results = _dres["results"]
+            st.markdown("### 🔮 Model Tahminleri")
+            _pcols = st.columns(len(_results))
+            for _i,(_mn,_res) in enumerate(_results.items()):
+                with _pcols[_i]:
+                    _pred = extract_pred(_res["text"], sport_name) if _res["text"] else None
+                    _sub  = extract_sub_pred(_res["text"], sport_name) if _res["text"] else {}
+                    _clr  = {"groq":"#EF9F27","gemini":"#22c55e","gpt":"#378ADD","deepseek":"#E24B4A"}.get(AI_MODELS[_mn]["id"],"#888")
+                    _sn   = " ".join(_mn.split()[:2])
+                    _sub_html = "".join([f'<div style="font-size:11px;color:{_clr};font-weight:600;white-space:nowrap">{k}: {v}</div>' for k,v in _sub.items()]) if _sub else ""
+                    if _pred:
+                        st.markdown(f'<div style="border:2px solid {_clr};border-radius:10px;padding:10px;text-align:center"><div style="font-size:10px;opacity:.6">{_sn}</div><div style="font-size:22px;font-weight:900;color:{_clr};white-space:nowrap">{_pred}</div>{_sub_html}</div>', unsafe_allow_html=True)
+                    elif _res.get("err"):
+                        err_s = str(_res["err"])[:35]
+                        st.markdown(f'<div style="border:1px solid #f87171;border-radius:10px;padding:8px;text-align:center"><div style="font-size:10px;opacity:.6">{_sn}</div><div style="font-size:10px;color:#f87171">{err_s}</div></div>', unsafe_allow_html=True)
+                    else:
+                        st.markdown(f'<div style="border:1px solid {_clr};border-radius:10px;padding:10px;text-align:center"><div style="font-size:10px;opacity:.6">{_sn}</div><div style="font-size:18px;font-weight:700;color:{_clr}">?</div></div>', unsafe_allow_html=True)
+            # Konsensüs
+            _cons = extract_consensus(_results, sport_name)
+            if _cons:
+                st.markdown("### 🤝 Ortak Tahminler")
+                _cc = st.columns(len(_cons))
+                for _i,(_k,(_lbl,_det)) in enumerate(_cons.items()):
+                    with _cc[_i]:
+                        st.markdown(f'<div style="background:var(--color-background-secondary);border-radius:10px;padding:10px;text-align:center"><div style="font-size:13px;font-weight:500">{_lbl}</div><div style="font-size:11px;opacity:.7;margin-top:4px">{_det}</div></div>', unsafe_allow_html=True)
+            # Geçmişe kaydet
+            for _mn,_res in _results.items():
+                if _res.get("text") and not _res.get("err"):
+                    _pred = extract_pred(_res["text"], sport_name)
+                    st.session_state.analysis_history.append({
+                        "time": dt_module.datetime.now(TZ_TR).strftime("%H:%M"),
+                        "sport": sport_name, "home": p["home"], "away": p["away"],
+                        "league": p.get("league",""), "model": _mn,
+                        "pred": _pred or "?", "text": _res["text"],
+                        "tokens": estimate_tokens(_res["text"]),
+                        "sub_pred": extract_sub_pred(_res["text"], sport_name)
+                    })
 
     # Futbol istatistikleri
     if cfg["key"]=="football" and p["sh"] not in WAIT_SH:
@@ -1626,18 +1681,27 @@ with tab_pre:
 
         st.markdown(f'<div style="font-size:12px;opacity:.5;margin-bottom:6px">{len(_sorted_ligs)} lig · {len(pre_all)} maç</div>', unsafe_allow_html=True)
 
-        # Lig seçici — tek selectbox, stabil
+        # Geri dönünce önceki lig seçimini koru
+        _saved_lig_key = f"saved_lig_{sport_name}_{date_str}"
+        _saved = st.session_state.get(_saved_lig_key, "")
+        _default_idx = 0
+        if _saved and _saved in _sorted_ligs:
+            _default_idx = _sorted_ligs.index(_saved)
+
+        # Lig seçici
         _sel_lig_label = st.selectbox(
             "🏆 Lig seç",
             _lig_options,
+            index=_default_idx,
             key=f"lig_sel_{sport_name}_{date_str}",
             label_visibility="collapsed"
         )
-        # Seçili ligin maçlarını göster
         _sel_lig_idx = _lig_options.index(_sel_lig_label)
         _sel_lig = _sorted_ligs[_sel_lig_idx]
-        _sel_matches = _lig_grp[_sel_lig]
+        # Seçimi kaydet
+        st.session_state[_saved_lig_key] = _sel_lig
 
+        _sel_matches = _lig_grp[_sel_lig]
         st.markdown(f'<div style="font-size:11px;opacity:.5;margin:4px 0 8px">📋 {_sel_lig} — {len(_sel_matches)} maç</div>', unsafe_allow_html=True)
 
         for _p in _sel_matches:
