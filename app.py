@@ -407,34 +407,45 @@ def extract_sub_pred(text, sport):
     is_hockey  = any(w in sl for w in ["hokey","hockey"])
     result = {}
     lines = text.split("\n")
-    for line in lines:
+
+    # Keyword listesi genişletildi — model ne yazarsa yazsın
+    YARI_KW  = ["1.yarı","ilk yarı","devre arası","halftime","half time",
+                "1.yari","yari tahmin","yarı tahmin","1. yarı","ht:","ht "]
+    BASKET_KW= ["1.yarı","ilk yarı","yarı skor","halftime","half time","1.çeyrek","ilk çeyrek"]
+    HOCKEY_KW= ["1.periyot","ilk periyot","birinci periyot","1st period","p1:","1.per"]
+    SET_KW   = ["1.set","ilk set","first set"]
+
+    for i, line in enumerate(lines):
         ll = line.lower()
+        # Keyword satırında veya bir sonraki 2 satırda skor ara
+        def find_score_near(kw_list, pat, mn=None, mx=None):
+            if not any(w in ll for w in kw_list):
+                return None
+            # Aynı satır + sonraki 2 satır
+            for check_line in lines[i:i+3]:
+                m = re.search(pat, check_line)
+                if m:
+                    a,b = int(m.group(1)), int(m.group(2))
+                    if mn is not None and (a < mn or b < mn): continue
+                    if mx is not None and (a > mx or b > mx): continue
+                    return f"{m.group(1)}–{m.group(2)}"
+            return None
+
         if is_tennis:
-            if "1.set" in ll or "ilk set" in ll:
-                m = re.search(r'(\d{1,2})\s*[-–]\s*(\d{1,2})', line)
-                if m:
-                    a,b = int(m.group(1)),int(m.group(2))
-                    if a<=7 and b<=7: result["1.Set"] = f"{m.group(1)}–{m.group(2)}"
+            s = find_score_near(SET_KW, r'(\d{1,2})\s*[-–]\s*(\d{1,2})', mx=7)
+            if s: result["1.Set"] = s
         elif is_basket:
-            # Basketbol: 1.Yarı büyük skor (2 haneli)
-            if any(w in ll for w in ["1.yarı","ilk yarı","yarı skor","halftime"]):
-                m = re.search(r'(\d{2,3})\s*[-–]\s*(\d{2,3})', line)
-                if m: result["1.Yarı"] = f"{m.group(1)}–{m.group(2)}"
+            s = find_score_near(BASKET_KW, r'(\d{2,3})\s*[-–]\s*(\d{2,3})', mn=20)
+            if s: result["1.Yarı"] = s
         elif is_hockey:
-            # Hokey: 1.Periyot küçük skor (0-3 arası)
-            if any(w in ll for w in ["1.periyot","ilk periyot","birinci periyot","1st period"]):
-                m = re.search(r'(\d{1,2})\s*[-–]\s*(\d{1,2})', line)
-                if m:
-                    a,b = int(m.group(1)), int(m.group(2))
-                    if a <= 5 and b <= 5: result["1.Per"] = f"{m.group(1)}–{m.group(2)}"
+            s = find_score_near(HOCKEY_KW, r'(\d{1,2})\s*[-–]\s*(\d{1,2})', mx=5)
+            if s: result["1.Per"] = s
         else:
-            # Futbol/Hentbol: 1.Yarı
-            if any(w in ll for w in ["1.yarı","ilk yarı","devre arası","halftime"]):
-                m = re.search(r'(\d{1,2})\s*[-–]\s*(\d{1,2})', line)
-                if m:
-                    a,b = int(m.group(1)), int(m.group(2))
-                    if a <= 10 and b <= 10:
-                        result["1.Yarı"] = f"{m.group(1)}–{m.group(2)}"
+            # Futbol: satırda keyword VE skor birlikte olabilir,
+            # ya da keyword satırından sonra skor satırı gelebilir
+            s = find_score_near(YARI_KW, r'(\d{1,2})\s*[-–]\s*(\d{1,2})', mx=10)
+            if s: result["1.Yarı"] = s
+
     return result
 
 def extract_consensus(results_dict, sport):
@@ -1088,6 +1099,11 @@ if st.session_state.get("detail_match"):
 
     # Kayıtlı sonucu göster
     if f"d_res_{mk}" in st.session_state:
+        # Haber varsa önce göster
+        nk = f"news_{mk}"
+        if st.session_state.get(nk):
+            st.markdown(f'<div class="news-box">🌐 <b>Güncel Haberler:</b><br>{st.session_state[nk]}</div>', unsafe_allow_html=True)
+
         _dres = st.session_state[f"d_res_{mk}"]
         if _dres["type"] == "single":
             show_ai(_dres["text"], _dres["err"], p, ai_model, sname=sport_name)
@@ -1117,6 +1133,13 @@ if st.session_state.get("detail_match"):
                 for _i,(_k,(_lbl,_det)) in enumerate(_cons.items()):
                     with _cc[_i]:
                         st.markdown(f'<div style="background:var(--color-background-secondary);border-radius:10px;padding:10px;text-align:center"><div style="font-size:13px;font-weight:500">{_lbl}</div><div style="font-size:11px;opacity:.7;margin-top:4px">{_det}</div></div>', unsafe_allow_html=True)
+            # Detaylı analiz metinleri
+            st.markdown("---")
+            for _mn,_res in _results.items():
+                if _res.get("text") and not _res.get("err"):
+                    _clr = {"groq":"#EF9F27","gemini":"#22c55e","gpt":"#378ADD","deepseek":"#E24B4A"}.get(AI_MODELS[_mn]["id"],"#888")
+                    _sn  = " ".join(_mn.split()[:2])
+                    st.markdown(f'<div class="ai-box" style="border-color:{_clr}55"><b style="color:{_clr}">{_sn}</b><br><br>{_res["text"]}</div>', unsafe_allow_html=True)
             # Geçmişe kaydet
             for _mn,_res in _results.items():
                 if _res.get("text") and not _res.get("err"):
