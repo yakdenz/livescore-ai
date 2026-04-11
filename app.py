@@ -1494,51 +1494,42 @@ with tab_pre:
         st.info("Maç öncesi maç bulunamadı.")
     else:
         from collections import defaultdict as _dd2
-        # Lig bazlı grupla
+
+        # ── Lig bazlı grupla ──
         _lig_grp = _dd2(list)
         for _p in pre_all:
-            _lig_key = f"{_p.get('country','')} – {_p['league']}"
-            _lig_grp[_lig_key].append(_p)
+            _lig_grp[_p["league"]].append(_p)
 
-        # Major ligler önce
         _major_names = ["Premier League","La Liga","Serie A","Bundesliga","Ligue 1",
                         "Süper Lig","Champions League","Europa League","Conference League",
+                        "Eredivisie","Primeira Liga","Super League","Ekstraklasa",
                         "NBA","Euroleague","ATP","WTA"]
         def _lig_sort_key(lg):
-            for i,m in enumerate(_major_names):
-                if m.lower() in lg.lower(): return i
+            for i,mn in enumerate(_major_names):
+                if mn.lower() in lg.lower(): return i
             return 99
+
         _sorted_ligs = sorted(_lig_grp.keys(), key=_lig_sort_key)
+        _lig_options = [f"{'⭐ ' if _lig_sort_key(l)<99 else ''}{l} ({len(_lig_grp[l])})" for l in _sorted_ligs]
 
-        # Hangi lig varsayılan açık?
-        _open_lig_key = "open_leagues"
-        if _open_lig_key not in st.session_state:
-            # İlk major ligi otomatik aç
-            st.session_state[_open_lig_key] = {_sorted_ligs[0]} if _sorted_ligs else set()
+        st.markdown(f'<div style="font-size:12px;opacity:.5;margin-bottom:6px">{len(_sorted_ligs)} lig · {len(pre_all)} maç</div>', unsafe_allow_html=True)
 
-        st.markdown(f'<div style="font-size:12px;opacity:.5;margin-bottom:8px">{len(_sorted_ligs)} lig · {len(pre_all)} maç — bir lige tıkla</div>', unsafe_allow_html=True)
+        # Lig seçici — tek selectbox, stabil
+        _sel_lig_label = st.selectbox(
+            "🏆 Lig seç",
+            _lig_options,
+            key=f"lig_sel_{sport_name}_{date_str}",
+            label_visibility="collapsed"
+        )
+        # Seçili ligin maçlarını göster
+        _sel_lig_idx = _lig_options.index(_sel_lig_label)
+        _sel_lig = _sorted_ligs[_sel_lig_idx]
+        _sel_matches = _lig_grp[_sel_lig]
 
-        for _lig in _sorted_ligs:
-            _matches = _lig_grp[_lig]
-            _cnt = len(_matches)
-            _is_open = _lig in st.session_state[_open_lig_key]
-            _arrow = "🔽" if _is_open else "▶️"
-            _is_maj = _lig_sort_key(_lig) < 99
+        st.markdown(f'<div style="font-size:11px;opacity:.5;margin:4px 0 8px">📋 {_sel_lig} — {len(_sel_matches)} maç</div>', unsafe_allow_html=True)
 
-            # Lig başlık satırı — tıklanabilir buton
-            _lig_label = f"{_arrow} {'⭐' if _is_maj else ''} {_lig}  ({_cnt})"
-            if st.button(_lig_label, key=f"lig_btn_{_lig}", use_container_width=True):
-                if _is_open:
-                    st.session_state[_open_lig_key].discard(_lig)
-                else:
-                    st.session_state[_open_lig_key].add(_lig)
-                st.rerun()
-
-            # Açıksa maçları göster
-            if _is_open:
-                for _p in _matches:
-                    match_card(_p, pre_raw)
-                st.markdown("---")
+        for _p in _sel_matches:
+            match_card(_p, pre_raw)
 
 with tab_live:
     # Manuel tetikleme
