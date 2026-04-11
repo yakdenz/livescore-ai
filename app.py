@@ -1038,6 +1038,8 @@ if st.session_state.get("detail_match"):
     # Analiz butonları + web haber seçeneği
     st.markdown("#### 🤖 Yeni Analiz")
     use_ws_d = st.checkbox("🌐 Gemini ile güncel haber/sakat bilgisi çek", key=f"ws_d_{mk}", value=False)
+    # Checkbox değerini session'a kaydet (spinner içinde erişim için)
+    st.session_state[f"ws_d_val_{mk}"] = use_ws_d
     da1, da2, da3 = st.columns(3)
     with da1:
         if st.button("🤖 Analiz", key=f"d_single_{mk}", use_container_width=True):
@@ -1055,6 +1057,7 @@ if st.session_state.get("detail_match"):
     # Analiz çalıştır ve sonucu session'a kaydet
     if st.session_state.get(f"d_run_{mk}") and f"d_res_{mk}" not in st.session_state:
         run_t = st.session_state[f"d_run_{mk}"]
+        _use_ws = st.session_state.get(f"ws_d_val_{mk}", False)  # checkbox değeri güvenli oku
         with st.spinner("Analiz yapılıyor..."):
             if cfg["key"]=="football":
                 sd  = fetch_stats(p["mid"]) if p["sh"]!="NS" else []
@@ -1074,7 +1077,7 @@ if st.session_state.get("detail_match"):
             else:
                 d_prompt = generic_prompt(sport_name,p["home"],p["away"],p["status_txt"],p["league"])
 
-            if (use_ws_d or run_t == "web_compare") and GEMINI_KEY:
+            if (_use_ws or run_t == "web_compare") and GEMINI_KEY:
                 nk = f"news_{mk}"
                 if nk not in st.session_state:
                     nt,_ = call_gemini(build_news_prompt(p["home"],p["away"],sport_name,p.get("league","")), use_search=True)
@@ -1153,27 +1156,28 @@ if st.session_state.get("detail_match"):
                         "sub_pred": extract_sub_pred(_res["text"], sport_name)
                     })
 
-    # Futbol: İstatistik + Olaylar tabları
+    # Futbol: İstatistik + Olaylar tabları (her zaman göster)
     if cfg["key"]=="football":
         st.markdown("---")
         _dt1, _dt2 = st.tabs(["📈 İstatistikler", "⚡ Olaylar"])
         with _dt1:
-            if p["sh"] in WAIT_SH:
-                st.info("Maç başlamadı.")
+            if p["sh"] == "NS":
+                st.info("Maç başlamadı, istatistik yok.")
             else:
                 with st.spinner("Yükleniyor..."):
                     stats_d = fetch_stats(p["mid"])
                 if stats_d and len(stats_d)>=2:
                     h2s = {s["type"]:s["value"] for s in stats_d[0].get("statistics",[])}
                     a2s = {s["type"]:s["value"] for s in stats_d[1].get("statistics",[])}
+                    st.markdown(f"🔵 **{p['home']}** vs 🔴 **{p['away']}**")
                     for k in ["Ball Possession","Total Shots","Shots on Goal","Shots off Goal",
                               "Blocked Shots","Corner Kicks","Fouls","Yellow Cards","Red Cards","Goalkeeper Saves"]:
                         hv=h2s.get(k,"-"); av=a2s.get(k,"-")
                         if hv not in [None,"-"] or av not in [None,"-"]: render_bar(k,hv or"-",av or"-")
                 else:
-                    st.warning("İstatistik henüz yok.")
+                    st.info("İstatistik henüz yok.")
         with _dt2:
-            if p["sh"] in WAIT_SH:
+            if p["sh"] == "NS":
                 st.info("Maç başlamadı.")
             else:
                 with st.spinner("Yükleniyor..."):
